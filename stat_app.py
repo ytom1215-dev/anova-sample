@@ -3,218 +3,116 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import japanize_matplotlib # 日本語化の救世主
-from statsmodels.formula.api import ols
-from statsmodels.stats.anova import anova_lm
+import japanize_matplotlib
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 # ページ設定
 st.set_page_config(page_title="農業データ統計解析アプリ", layout="wide")
-st.title("📊 栽培試験データ・分散分析解析ツール")
+st.title("📊 栽培試験データ・統合解析ツール")
 
-data_source = st.radio(
-    "データの入力方法を選んでください：", 
-    ["🥔 組み込みのサンプルデータで試す", "📁 自分のCSVをアップロードする"]
-)
+# 1. データ入力セクション
+data_source = st.radio("データの入力方法：", ["🥔 サンプルデータで試す", "📁 自分のCSVをアップロードする"])
 
-df = None
-
-if data_source == "🥔 組み込みのサンプルデータで試す":
+if data_source == "🥔 サンプルデータで試す":
+    # 発芽試験のサンプルデータを生成
     df = pd.DataFrame({
-        '品種': ['とうや', 'とうや', 'とうや', 'ニシユタカ', 'ニシユタカ', 'ニシユタカ', 'デジマ', 'デジマ', 'デジマ'] * 2,
-        '施肥量': [0, 10, 20, 0, 10, 20, 0, 10, 20] * 2,
-        '収量': [210, 250, 260, 230, 280, 310, 190, 240, 250, 215, 255, 265, 235, 285, 315, 195, 245, 255]
+        '品種': ['品種A', '品種A', '品種B', '品種B', '品種C', '品種C'] * 3,
+        'かん水': ['少', '多'] * 9,
+        '全数': [100] * 18,
+        '発芽数': [85, 92, 40, 55, 10, 25, 88, 90, 42, 58, 12, 28, 84, 95, 38, 60, 15, 30],
+        '収量': [210, 250, 180, 200, 150, 170, 215, 255, 185, 205, 155, 175, 205, 245, 175, 195, 145, 165]
     })
-    st.success("✅ サンプルデータを読み込みました。（施肥量を数値データとして扱います）")
+    st.success("✅ サンプルデータを読み込みました。（発芽率解析にも対応しています）")
 else:
-    uploaded_file = st.file_uploader("CSVファイルをアップロードしてください", type="csv")
-    if uploaded_file is not None:
+    uploaded_file = st.file_uploader("CSVアップロード", type="csv")
+    if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file, encoding='shift_jis')
-        except UnicodeDecodeError:
+        except:
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, encoding='utf-8')
-        
-        if len(df.columns) == 1:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, encoding='shift_jis', sep='\t')
         st.success("✅ CSVを読み込みました。")
+    else:
+        df = None
 
 if df is not None:
-    st.subheader("1. データプレビュー")
-    st.dataframe(df.head(10))
+    st.divider()
+    
+    # 2. 解析モードの選択
+    analysis_mode = st.sidebar.selectbox(
+        "解析モードを選択してください",
+        ["📦 収量解析 (正規分布/ANOVA)", "🌱 発芽・発病率解析 (二項分布/GLM)"]
+    )
 
+    # 3. 変数選択のUI
+    st.subheader(f"設定: {analysis_mode}")
     col1, col2, col3 = st.columns(3)
+    
     with col1:
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        yld_idx = df.columns.get_loc('収量') if '収量' in df.columns else (df.columns.get_loc(numeric_cols[0]) if numeric_cols else 0)
-        target_col = st.selectbox("目的変数（収量など：数値）", df.columns, index=yld_idx)
+        if "収量解析" in analysis_mode:
+            target_col = st.selectbox("目的変数（数値）", df.columns, index=df.columns.get_loc('収量') if '収量' in df.columns else 0)
+        else:
+            sprouted_col = st.selectbox("発芽数・発病数（分子）", df.columns, index=df.columns.get_loc('発芽数') if '発芽数' in df.columns else 0)
+            total_col = st.selectbox("全数・調査数（分母）", df.columns, index=df.columns.get_loc('全数') if '全数' in df.columns else 0)
+    
     with col2:
-        var_idx = df.columns.get_loc('品種') if '品種' in df.columns else 0
-        factor_x = st.selectbox("主要因（品種など：カテゴリ扱いにします）", df.columns, index=var_idx)
+        factor_x = st.selectbox("主要因（品種など）", df.columns, index=df.columns.get_loc('品種') if '品種' in df.columns else 0)
+    
     with col3:
-        fer_idx = df.columns.get_loc('施肥量') if '施肥量' in df.columns else (1 if len(df.columns)>1 else 0)
-        factor_sub = st.selectbox("副要因（施肥量など：カテゴリ・連続変数の両方で解析します）", df.columns, index=fer_idx)
+        factor_sub = st.selectbox("副要因（かん水・施肥量など）", df.columns, index=df.columns.get_loc('かん水') if 'かん水' in df.columns else 1)
 
-    # --- アルファベット付与(CLD)の共通関数 ---
-    def get_cld_letters(df, target, group, tukey_summary):
-        means = df.groupby(group)[target].mean().sort_values(ascending=False)
-        groups = means.index.astype(str).tolist()
+    if st.button("解析を実行"):
+        # グラフ共通設定
+        sns.set_theme(style="whitegrid")
+        plt.rcParams['font.family'] = 'IPAexGothic'
         
-        cld = {g: [] for g in groups}
-        current_letter = ord('a')
-        
-        for i in range(len(groups)):
-            g1 = groups[i]
-            non_diff = [g1]
-            for j in range(i + 1, len(groups)):
-                g2 = groups[j]
-                mask = ((tukey_summary['group1'].astype(str) == g1) & (tukey_summary['group2'].astype(str) == g2)) | \
-                       ((tukey_summary['group1'].astype(str) == g2) & (tukey_summary['group2'].astype(str) == g1))
-                reject = tukey_summary.loc[mask, 'reject'].values
-                if len(reject) > 0 and not reject[0]: 
-                    non_diff.append(g2)
-            
-            shared_letters = set(cld[non_diff[0]])
-            for g in non_diff[1:]:
-                shared_letters = shared_letters.intersection(cld[g])
-            
-            if not shared_letters:
-                for g in non_diff:
-                    cld[g].append(chr(current_letter))
-                current_letter += 1
-        
-        return pd.DataFrame({
-            'groups_name': list(cld.keys()),
-            'letters': ["".join(l) for l in cld.values()]
-        }), groups
-
-    if st.button("解析を実行する"):
         try:
-            df_clean = df.copy()
-            df_clean[target_col] = pd.to_numeric(df_clean[target_col], errors='coerce')
-            df_clean = df_clean.dropna(subset=[target_col]).copy()
-
-            if df_clean.empty:
-                st.error("【エラー】目的変数に数値がありません。列の選択を見直してください。")
-            else:
-                st.header("📈 解析結果報告書")
-                
-                # 🌟すべてのグラフの背景とフォントを「一括」で設定（ここで豆腐を完全ブロック）🌟
-                sns.set_theme(style="whitegrid")
-                plt.rcParams['font.family'] = 'IPAexGothic'
-
-                df_clean[factor_x] = df_clean[factor_x].astype(str)
-                df_clean[factor_sub] = df_clean[factor_sub].astype(str)
-
-                # 1. 二元配置分散分析 (ANOVA)
+            # --- モード1：収量解析 (ANOVA) ---
+            if "収量解析" in analysis_mode:
                 formula = f'Q("{target_col}") ~ C(Q("{factor_x}")) + C(Q("{factor_sub}"))'
-                model = ols(formula, data=df_clean).fit()
-                anova_res = anova_lm(model, typ=2)
-                anova_res.index = [f"{factor_x} (主効果)", f"{factor_sub} (副効果)", '残差']
-
-                st.subheader("1. 二元配置分散分析表 (ANOVA)")
-                st.write(anova_res)
-                st.divider()
-
-                # 2. 主要因（品種など）の多重比較
-                st.subheader(f"2. {factor_x} ごとの多重比較 (Tukey HSD)")
-                tukey_x = pairwise_tukeyhsd(endog=df_clean[target_col], groups=df_clean[factor_x], alpha=0.05)
-                tukey_summary_x = pd.DataFrame(data=tukey_x._results_table.data[1:], columns=tukey_x._results_table.data[0])
-                letters_df_x, groups_order_x = get_cld_letters(df_clean, target_col, factor_x, tukey_summary_x)
+                model = smf.ols(formula, data=df).fit()
+                anova_table = sm.stats.anova_lm(model, typ=2)
                 
-                col_a, col_b = st.columns([2, 1])
-                with col_a:
-                    st.dataframe(tukey_summary_x)
-                with col_b:
-                    st.dataframe(letters_df_x.rename(columns={'groups_name': factor_x, 'letters': '有意差(abc)'}))
-
-                # 個別の設定を削除し、一括設定に従わせる
-                fig_x, ax_x = plt.subplots(figsize=(10, 6))
-                sns.boxplot(x=factor_x, y=target_col, data=df_clean, order=groups_order_x, ax=ax_x, color='#f0f0f0', showfliers=False)
-                sns.stripplot(x=factor_x, y=target_col, data=df_clean, order=groups_order_x, ax=ax_x, color='black', alpha=0.5)
+                st.write("### 分散分析表 (ANOVA)")
+                st.table(anova_table)
                 
-                for group_name in groups_order_x:
-                    letter = letters_df_x.loc[letters_df_x['groups_name'] == group_name, 'letters'].values[0]
-                    x_pos = groups_order_x.index(group_name)
-                    y_max = df_clean[df_clean[factor_x] == group_name][target_col].max()
-                    ax_x.text(x_pos, y_max * 1.05, letter, ha='center', va='bottom', fontweight='bold', fontsize=16, color='#d62728')
+                # 多重比較（Tukey）
+                tukey = pairwise_tukeyhsd(df[target_col], df[factor_x])
+                st.write(f"### {factor_x} の多重比較")
+                st.write(pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0]))
                 
-                ax_x.set_ylabel(target_col, fontsize=12)
-                ax_x.set_xlabel(factor_x, fontsize=12)
-                st.pyplot(fig_x)
-                st.divider()
+                # グラフ
+                fig, ax = plt.subplots(figsize=(8, 5))
+                sns.boxplot(x=factor_x, y=target_col, hue=factor_sub, data=df, ax=ax)
+                st.pyplot(fig)
 
-                # 3. 副要因（施肥量など）の多重比較
-                st.subheader(f"3. {factor_sub} ごとの多重比較 (ANOVA視点：カテゴリとして比較)")
-                tukey_sub = pairwise_tukeyhsd(endog=df_clean[target_col], groups=df_clean[factor_sub], alpha=0.05)
-                tukey_summary_sub = pd.DataFrame(data=tukey_sub._results_table.data[1:], columns=tukey_sub._results_table.data[0])
-                letters_df_sub, groups_order_sub = get_cld_letters(df_clean, target_col, factor_sub, tukey_summary_sub)
+            # --- モード2：発芽・発病率解析 (GLM) ---
+            else:
+                df['not_sprouted'] = df[total_col] - df[sprouted_col]
+                # Rの cbind(sprouted, n-sprouted) と同等の処理
+                formula = f'I({sprouted_col} + not_sprouted) ~ C(Q("{factor_x}")) + C(Q("{factor_sub}"))'
                 
-                col_c, col_d = st.columns([2, 1])
-                with col_c:
-                    st.dataframe(tukey_summary_sub)
-                with col_d:
-                    st.dataframe(letters_df_sub.rename(columns={'groups_name': factor_sub, 'letters': '有意差(abc)'}))
-
-                fig_sub, ax_sub = plt.subplots(figsize=(10, 6))
-                sns.boxplot(x=factor_sub, y=target_col, data=df_clean, order=groups_order_sub, ax=ax_sub, color='#e6f3ff', showfliers=False)
-                sns.stripplot(x=factor_sub, y=target_col, data=df_clean, order=groups_order_sub, ax=ax_sub, color='black', alpha=0.5)
+                # GLM実行 (Binomial)
+                # statsmodelsのGLMでR風のformulaを使うための工夫
+                model = smf.glm(formula=f'{sprouted_col} + not_sprouted ~ C(Q("{factor_x}")) + C(Q("{factor_sub}"))',
+                                data=df, family=sm.families.Binomial()).fit()
                 
-                for group_name in groups_order_sub:
-                    letter = letters_df_sub.loc[letters_df_sub['groups_name'] == group_name, 'letters'].values[0]
-                    x_pos = groups_order_sub.index(group_name)
-                    y_max = df_clean[df_clean[factor_sub] == group_name][target_col].max()
-                    ax_sub.text(x_pos, y_max * 1.05, letter, ha='center', va='bottom', fontweight='bold', fontsize=16, color='#d62728')
+                st.write("### GLM 解析結果要約 (ロジスティック回帰)")
+                st.text(model.summary())
                 
-                ax_sub.set_ylabel(target_col, fontsize=12)
-                ax_sub.set_xlabel(factor_sub, fontsize=12)
-                st.pyplot(fig_sub)
-                st.divider()
-
-                # 4. 単回帰分析
-                st.subheader(f"4. {factor_sub} を量的変数とした単回帰分析 (回帰視点)")
-                st.info("💡 **ワンポイント：分散分析と回帰分析の関係**\n\n分散分析（ANOVA）は、内部的にはカテゴリをダミー変数（0と1）に変換した「回帰分析」として計算されています。どちらも「一般線形モデル（GLM）」という同じ数学的枠組みの仲間です。")
-
-                df_reg = df_clean.copy()
-                df_reg[factor_sub] = pd.to_numeric(df_reg[factor_sub], errors='coerce')
-
-                if df_reg[factor_sub].isna().all():
-                    st.warning(f"『{factor_sub}』列が数値データではないため、単回帰分析はスキップしました。")
-                else:
-                    df_reg = df_reg.dropna(subset=[factor_sub, target_col])
-                    formula_reg = f'Q("{target_col}") ~ Q("{factor_sub}")'
-                    model_reg = ols(formula_reg, data=df_reg).fit()
-                    
-                    r2 = model_reg.rsquared
-                    p_val = model_reg.f_pvalue
-                    intercept = model_reg.params['Intercept']
-                    slope = model_reg.params[f'Q("{factor_sub}")']
-                    
-                    col_e, col_f = st.columns([1, 2])
-                    with col_e:
-                        st.write("▼ 単回帰モデルの要約")
-                        st.write(f"- **決定係数 ($R^2$)**: {r2:.3f}")
-                        st.write(f"- **モデルのP値**: {p_val:.3e}")
-                        st.write(f"- **回帰式**: Y = {slope:.2f}X + {intercept:.2f}")
-                        
-                    with col_f:
-                        fig_reg, ax_reg = plt.subplots(figsize=(10, 6))
-                        sns.regplot(x=factor_sub, y=target_col, data=df_reg, ax=ax_reg, 
-                                    scatter_kws={'alpha':0.6, 'color':'black', 's': 50}, line_kws={'color':'#d62728'})
-                        
-                        textstr = f'$R^2 = {r2:.3f}$\n$y = {slope:.2f}x + {intercept:.2f}$'
-                        props = dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray')
-                        ax_reg.text(0.05, 0.95, textstr, transform=ax_reg.transAxes, fontsize=14,
-                                    verticalalignment='top', bbox=props)
-                        
-                        ax_reg.set_ylabel(target_col, fontsize=12)
-                        ax_reg.set_xlabel(f"{factor_sub} (量的変数)", fontsize=12)
-                        st.pyplot(fig_reg)
+                # カイ二乗検定 (Rの anova(test='Chisq') に相当)
+                st.write("### 偏差分析 (カイ二乗検定)")
+                st.table(model.wald_test_terms().table_summary)
+                
+                # グラフ（比率を表示）
+                df['ratio'] = df[sprouted_col] / df[total_col]
+                fig, ax = plt.subplots(figsize=(8, 5))
+                sns.barplot(x=factor_x, y='ratio', hue=factor_sub, data=df, ax=ax)
+                ax.set_ylabel("比率 (0-1.0)")
+                ax.set_ylim(0, 1.1)
+                st.pyplot(fig)
 
         except Exception as e:
-            st.error(f"解析中にエラーが発生しました: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-else:
-    st.info("CSVファイルをアップロードしてください。")
+            st.error(f"解析エラー: {e}")
