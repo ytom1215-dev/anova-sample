@@ -116,9 +116,15 @@ if df is not None:
                                 data=df, family=sm.families.Binomial()).fit()
                 
                 st.subheader("1. 偏差分析 (カイ二乗検定)")
-                # 🌟 エラー対策：値を数値型にクリーンアップ 🌟
+                # 🌟 エラー対策：値を確実にスカラー数値へ変換 🌟
                 w_res = model.wald_test_terms().summary_frame()
-                w_res_clean = w_res.applymap(lambda x: float(x[0]) if isinstance(x, (list, np.ndarray)) else x)
+                
+                def clean_value(x):
+                    # 配列やリストなら中身を取り出す、そうでなければそのまま
+                    val = np.asarray(x).item() if hasattr(x, "__len__") else x
+                    return val
+
+                w_res_clean = w_res.apply(lambda col: col.map(clean_value))
                 st.table(w_res_clean)
 
                 # --- Tukey ---
