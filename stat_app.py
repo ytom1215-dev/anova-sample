@@ -88,23 +88,25 @@ if df is not None:
                 sns.boxplot(x=factor_x, y=target_col, hue=factor_sub, data=df, ax=ax)
                 st.pyplot(fig)
 
-            # --- モード2：発芽・発病率解析 (GLM) ---
+           # --- モード2：発芽・発病率解析 (GLM) ---
             else:
                 df['not_sprouted'] = df[total_col] - df[sprouted_col]
-                # Rの cbind(sprouted, n-sprouted) と同等の処理
-                formula = f'I({sprouted_col} + not_sprouted) ~ C(Q("{factor_x}")) + C(Q("{factor_sub}"))'
                 
                 # GLM実行 (Binomial)
-                # statsmodelsのGLMでR風のformulaを使うための工夫
-                model = smf.glm(formula=f'{sprouted_col} + not_sprouted ~ C(Q("{factor_x}")) + C(Q("{factor_sub}"))',
+                model = smf.glm(formula=f'Q("{sprouted_col}") + not_sprouted ~ C(Q("{factor_x}")) + C(Q("{factor_sub}"))',
                                 data=df, family=sm.families.Binomial()).fit()
                 
                 st.write("### GLM 解析結果要約 (ロジスティック回帰)")
                 st.text(model.summary())
                 
-                # カイ二乗検定 (Rの anova(test='Chisq') に相当)
+                # 🌟ここを修正：table_summary ではなく summary_frame() を使う🌟
                 st.write("### 偏差分析 (カイ二乗検定)")
-                st.table(model.wald_test_terms().table_summary)
+                try:
+                    wald_res = model.wald_test_terms().summary_frame()
+                    st.table(wald_res)
+                except:
+                    # 万が一の予備コード
+                    st.write(model.wald_test_terms())
                 
                 # グラフ（比率を表示）
                 df['ratio'] = df[sprouted_col] / df[total_col]
