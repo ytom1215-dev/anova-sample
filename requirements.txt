@@ -5,3 +5,5 @@ matplotlib
 seaborn
 japanize-matplotlib
 statsmodels
+scipy
+scikit-posthocs
