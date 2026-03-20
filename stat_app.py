@@ -10,7 +10,6 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 # --- 共通関数：有意差のabc（CLD）を生成 ---
 def get_cld_letters(df, target, group, tukey_summary):
-    # エラー防止のため文字列に統一
     df_clean = df.copy()
     df_clean[group] = df_clean[group].astype(str)
     
@@ -57,26 +56,51 @@ mode = st.sidebar.selectbox(
 st.sidebar.header("⚙️ 3. データの入力")
 data_source = st.sidebar.radio("入力方法：", ["🧪 サンプルデータで試す", "📁 CSVアップロード"])
 
-# --- 2. サンプルデータの自動生成 ---
+# --- 2. サンプルデータの自動生成（★確実に有意差が出るように強化★） ---
 if data_source == "🧪 サンプルデータで試す":
+    np.random.seed(42) # データが毎回変わらないように固定
+    
     if "要因解析" in analysis_purpose:
+        n_grp = 10
+        # a, b, cが綺麗に分かれるように平均値を大きく離す
         df = pd.DataFrame({
-            '品種': ['品種A']*6 + ['品種B']*6 + ['品種C']*6,
-            '処理': ['標準', '多量'] * 9,
-            '収量': [210, 250, 180, 200, 150, 170, 215, 255, 185, 205, 155, 175, 205, 245, 175, 195, 145, 165],
-            '発芽数': [88, 95, 45, 60, 15, 30, 85, 92, 42, 58, 12, 28, 90, 96, 40, 62, 18, 35],
-            '全数': [100] * 18,
-            '腐敗数': [2, 1, 8, 12, 25, 30, 3, 2, 7, 10, 22, 28, 1, 3, 9, 11, 24, 32]
+            '品種': ['品種A(優)']*n_grp + ['品種B(中)']*n_grp + ['品種C(劣)']*n_grp,
+            '処理': ['標準', '多量'] * 15,
+            '収量': np.concatenate([
+                np.random.normal(280, 10, n_grp), # Aは高収量
+                np.random.normal(230, 10, n_grp), # Bは中程度
+                np.random.normal(180, 10, n_grp)  # Cは低収量
+            ]).astype(int),
+            '全数': [100] * (n_grp * 3),
+            '発芽数': np.concatenate([
+                np.random.binomial(100, 0.90, n_grp), # Aは90%発芽
+                np.random.binomial(100, 0.50, n_grp), # Bは50%発芽
+                np.random.binomial(100, 0.15, n_grp)  # Cは15%発芽
+            ]),
+            '腐敗数': np.concatenate([
+                np.random.poisson(2, n_grp),  # Aは腐りにくい
+                np.random.poisson(10, n_grp), # Bは普通
+                np.random.poisson(25, n_grp)  # Cはすぐ腐る
+            ])
         })
     else:
         n = 30
         x = np.linspace(10, 40, n)
-        y_ols = 3.17 * x + 217.5 + np.random.normal(0, 15, n)
-        p = 1 / (1 + np.exp(-0.2 * (x - 25)))
+        # グラフの線に沿うようにノイズを小さく設定
+        y_ols = 4.5 * x + 100 + np.random.normal(0, 8, n)
+        p = 1 / (1 + np.exp(-0.3 * (x - 25)))
         sp = np.random.binomial(100, p)
-        y_poi = np.random.poisson(np.exp(0.08 * x))
-        df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '収量': y_ols, '全数': 100, '発芽数': sp, '腐敗数': y_poi})
-    st.success(f"✅ {analysis_purpose.split()[1]} 用のサンプルデータを読み込みました。")
+        y_poi = np.random.poisson(np.exp(0.09 * x))
+        
+        df = pd.DataFrame({
+            '温度': x, 
+            '品種': ['品種A']*15 + ['品種B']*15, 
+            '収量': y_ols, 
+            '全数': 100, 
+            '発芽数': sp, 
+            '腐敗数': y_poi
+        })
+    st.success(f"✅ テスト用データ（有意差保証版）を読み込みました。美しい結果を確認できます。")
 else:
     uploaded_file = st.sidebar.file_uploader("CSV選択", type="csv")
     df = pd.read_csv(uploaded_file) if uploaded_file else None
@@ -109,7 +133,6 @@ if df is not None:
             fs = None
 
     if st.button("🚀 解析を実行"):
-        # 欠損値の除外（エラー防止）
         use_cols = [target, fx] if fs is None else [target, fx, fs]
         if "発芽率" in mode: use_cols.extend([sp_col, tt_col])
         df_clean = df.dropna(subset=[c for c in use_cols if c in df.columns]).copy()
@@ -119,11 +142,8 @@ if df is not None:
         fig, ax = plt.subplots(figsize=(10, 6))
         
         try:
-            # ==========================================
-            # A: 要因解析モード (Tukey & abc付け)
-            # ==========================================
             if "要因解析" in analysis_purpose:
-                df_clean[fx] = df_clean[fx].astype(str) # Tukeyエラー防止
+                df_clean[fx] = df_clean[fx].astype(str)
                 
                 if "収量" in mode:
                     formula = f'Q("{target}") ~ C(Q("{fx}")) + C(Q("{fs}"))'
@@ -144,7 +164,6 @@ if df is not None:
                     w_res = model.wald_test_terms().summary_frame()
                     st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
 
-                # Tukey & グラフ
                 st.subheader(f"2. {fx} の多重比較 (Tukey HSD)")
                 tukey = pairwise_tukeyhsd(df_clean[target], df_clean[fx])
                 tk_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
@@ -153,13 +172,11 @@ if df is not None:
                 c_l, c_r = st.columns([2, 1])
                 c_l.dataframe(tk_df); c_r.dataframe(let_df.rename(columns={'groups_name': fx}))
                 
-                # グラフ描画（orderを明示してラベルのズレを完璧に防止）
                 if "収量" in mode: 
                     sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
                 else: 
                     sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
                 
-                # ラベル位置の最適化
                 y_offset = df_clean[target].max() * 0.05
                 if y_offset == 0: y_offset = 0.05
                 
@@ -169,9 +186,6 @@ if df is not None:
                     ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
                 st.pyplot(fig)
 
-            # ==========================================
-            # B: 回帰解析モード (予測曲線と数式)
-            # ==========================================
             else:
                 is_num = np.issubdtype(df_clean[fx].dtype, np.number)
                 if not is_num:
@@ -200,10 +214,7 @@ if df is not None:
                     st.subheader("1. 予測モデル (ポアソン回帰)")
                     st.info(f"📝 式: **Y = exp({a:.3f}X + {b:.3f})**")
                     x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
-                    
-                    # 🌟 今回のタイポ修正箇所 🌟
                     ax.plot(x_range, np.exp(a * x_range + b), color='red', lw=3)
-                    
                     ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
 
                 st.write("### 2. モデルの詳細要約")
