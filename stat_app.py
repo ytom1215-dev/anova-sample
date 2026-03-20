@@ -37,112 +37,83 @@ def get_cld_letters(df, target, group, tukey_summary):
 st.set_page_config(page_title="農業統計解析ツール", layout="wide")
 st.title("📊 農業データ・自動統計解析システム")
 
-# --- 1. データ読み込み ---
-data_source = st.sidebar.radio("データの入力方法：", ["🥔 サンプルデータ", "📁 CSVアップロード"])
+# --- 1. モード選択とデータ生成 ---
+st.sidebar.header("⚙️ 解析設定")
+mode = st.sidebar.selectbox("解析モード", ["📦 収量解析 (正規/OLS)", "🌱 発芽率解析 (二項/Logit)", "🐛 腐敗・虫害数解析 (ポアソン/Log)"])
+data_source = st.sidebar.radio("データ：", ["🧪 数値回帰用サンプル", "📁 CSVアップロード"])
 
-if data_source == "🥔 サンプルデータ":
-    df = pd.DataFrame({
-        '品種': ['品種A', '品種A', '品種B', '品種B', '品種C', '品種C'] * 3,
-        '処理': ['標準', '多量'] * 9,
-        '収量': [210, 250, 180, 200, 150, 170, 215, 255, 185, 205, 155, 175, 205, 245, 175, 195, 145, 165],
-        '発芽数': [88, 95, 45, 60, 15, 30, 85, 92, 42, 58, 12, 28, 90, 96, 40, 62, 18, 35],
-        '全数': [100] * 18,
-        '腐敗数': [2, 1, 8, 12, 25, 30, 3, 2, 7, 10, 22, 28, 1, 3, 9, 11, 24, 32]
-    })
-else:
-    uploaded_file = st.sidebar.file_uploader("CSVファイルを選択", type="csv")
-    if uploaded_file:
-        try:
-            df = pd.read_csv(uploaded_file, encoding='shift_jis')
-        except:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, encoding='utf-8')
+if data_source == "🧪 数値回帰用サンプル":
+    n = 30
+    x = np.linspace(10, 40, n) # 温度や日数などの数値要因
+    if "収量解析" in mode:
+        y = 3.17 * x + 217.5 + np.random.normal(0, 10, n)
+        df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '収量': y})
+    elif "発芽率" in mode:
+        # S字カーブ（ロジスティック曲線）
+        z = 0.2 * (x - 25)
+        p = 1 / (1 + np.exp(-z))
+        sp = np.random.binomial(100, p)
+        df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '全数': 100, '発芽数': sp})
     else:
-        df = None
+        # 指数関数的増加（ポアソン）
+        y_poi = np.random.poisson(np.exp(0.08 * x))
+        df = pd.DataFrame({'保存日数': x, '品種': ['品種A']*15 + ['品種B']*15, '腐敗数': y_poi})
+    st.success("✅ 回帰分析に適した数値を読み込みました。")
+else:
+    uploaded_file = st.sidebar.file_uploader("CSV選択", type="csv")
+    df = pd.read_csv(uploaded_file) if uploaded_file else None
 
+# --- 2. 解析実行 ---
 if df is not None:
-    # --- 2. 解析モードの選択 ---
-    st.sidebar.divider()
-    mode = st.sidebar.selectbox(
-        "解析モードの選択",
-        ["📦 収量 (正規分布/ANOVA)", "🌱 発芽率 (二項分布/GLM)", "🐛 腐敗数 (ポアソン分布/GLM)"]
-    )
-
-    st.header(f"🔍 設定：{mode}")
     col1, col2, col3 = st.columns(3)
-
     with col1:
-        if "収量" in mode:
-            target_col = st.selectbox("解析する数値（収量など）", df.columns)
+        if "収量解析" in mode: target = st.selectbox("目的変数", df.columns, index=len(df.columns)-1)
         elif "発芽率" in mode:
-            sp_col = st.selectbox("カウント数（発芽数など）", df.columns)
-            tt_col = st.selectbox("全数（調査数）", df.columns)
-        else:
-            target_col = st.selectbox("カウント数（腐敗数・虫数など）", df.columns)
+            sp_col = st.selectbox("発芽数", df.columns, index=len(df.columns)-1)
+            tt_col = st.selectbox("全数", df.columns, index=len(df.columns)-2)
+            df['ratio'] = df[sp_col] / df[tt_col]
+            target = 'ratio'
+        else: target = st.selectbox("カウント数", df.columns, index=len(df.columns)-1)
+    with col2: fx = st.selectbox("主要因 (X軸/数値推奨)", df.columns, index=0)
+    with col3: fs = st.selectbox("副要因 (色分け)", df.columns, index=1)
 
-    with col2:
-        fx = st.selectbox("主要因（品種など）", df.columns)
-    with col3:
-        fs = st.selectbox("副要因（処理・かん水など）", df.columns)
-
-    if st.button("🚀 解析を実行"):
+    if st.button("🚀 回帰解析を実行"):
         sns.set_theme(style="whitegrid")
         plt.rcParams['font.family'] = 'IPAexGothic'
+        fig, ax = plt.subplots(figsize=(10, 6))
         
         try:
-            # --- 解析ロジック ---
-            if "収量" in mode:
-                # ANOVA
-                formula = f'Q("{target_col}") ~ C(Q("{fx}")) + C(Q("{fs}"))'
-                model = smf.ols(formula, data=df).fit()
-                st.subheader("1. 分散分析表 (ANOVA)")
-                st.table(sm.stats.anova_lm(model, typ=2))
-                plot_target = target_col
+            # --- 統計モデルと回帰式の算出 ---
+            is_numeric = np.issubdtype(df[fx].dtype, np.number)
+            
+            if "収量解析" in mode:
+                model = smf.ols(f'Q("{target}") ~ Q("{fx}")', data=df).fit()
+                st.info(f"📝 直線回帰式: **Y = {model.params[1]:.3f}X + {model.params[0]:.3f}**")
+                if is_numeric: sns.regplot(x=fx, y=target, data=df, ax=ax, scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
             
             elif "発芽率" in mode:
-                # GLM (Binomial)
                 df['not_sp'] = df[tt_col] - df[sp_col]
-                df['ratio'] = df[sp_col] / df[tt_col]
-                formula = f'Q("{sp_col}") + not_sp ~ C(Q("{fx}")) + C(Q("{fs}"))'
-                model = smf.glm(formula, data=df, family=sm.families.Binomial()).fit()
-                st.subheader("1. 偏差分析 (カイ二乗検定)")
-                w_res = model.wald_test_terms().summary_frame()
-                st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
-                plot_target = 'ratio'
-            
-            else:
-                # GLM (Poisson)
-                formula = f'Q("{target_col}") ~ C(Q("{fx}")) + C(Q("{fs}"))'
-                model = smf.glm(formula, data=df, family=sm.families.Poisson()).fit()
-                st.subheader("1. 偏差分析 (カイ二乗検定)")
-                w_res = model.wald_test_terms().summary_frame()
-                st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
-                plot_target = target_col
+                model = smf.glm(f'Q("{sp_col}") + not_sp ~ Q("{fx}")', data=df, family=sm.families.Binomial()).fit()
+                a, b = model.params[1], model.params[0]
+                st.info(f"📝 ロジスティック予測式: **P = 1 / (1 + exp(-({a:.3f}X + {b:.3f})))**")
+                if is_numeric:
+                    x_range = np.linspace(df[fx].min(), df[fx].max(), 100)
+                    y_pred = 1 / (1 + np.exp(-(a * x_range + b)))
+                    ax.plot(x_range, y_pred, color='red', lw=3); ax.scatter(df[fx], df[target], alpha=0.5)
 
-            # --- Tukey多重比較 ---
-            st.subheader(f"2. {fx} の多重比較 (Tukey)")
-            tukey = pairwise_tukeyhsd(df[plot_target], df[fx])
-            tk_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
-            let_df, grp_ord = get_cld_letters(df, plot_target, fx, tk_df)
-            
-            c_left, c_right = st.columns([2, 1])
-            c_left.dataframe(tk_df)
-            c_right.dataframe(let_df.rename(columns={'groups_name': fx}))
-
-            # --- グラフ ---
-            fig, ax = plt.subplots(figsize=(8, 5))
-            if "収量" in mode:
-                sns.boxplot(x=fx, y=plot_target, hue=fs, data=df, ax=ax)
             else:
-                sns.barplot(x=fx, y=plot_target, hue=fs, data=df, ax=ax, capsize=.1)
-            
-            # abcラベル
-            for i, g in enumerate(grp_ord):
-                l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
-                y_pos = df[df[fx] == g][plot_target].max()
-                ax.text(i, y_pos * 1.05 if "収量" in mode else y_pos + 0.05, l, ha='center', color='red', weight='bold', size=14)
-            
+                model = smf.glm(f'Q("{target}") ~ Q("{fx}")', data=df, family=sm.families.Poisson()).fit()
+                a, b = model.params[1], model.params[0]
+                st.info(f"📝 ポアソン回帰式 (指数): **Y = exp({a:.3f}X + {b:.3f})**")
+                if is_numeric:
+                    x_range = np.linspace(df[fx].min(), df[fx].max(), 100)
+                    y_pred = np.exp(a * x_range + b)
+                    ax.plot(x_range, y_pred, color='red', lw=3); ax.scatter(df[fx], df[target], alpha=0.5)
+
+            st.write("### モデル詳細 (Summary)")
+            st.text(model.summary())
+            ax.set_title(f"{mode} の回帰曲線")
             st.pyplot(fig)
 
         except Exception as e:
-            st.error(f"解析エラーが発生しました。設定を見直してください： {e}")
+            st.error(f"解析エラー: {e}")
