@@ -41,13 +41,30 @@ def get_cld_letters(df, target, group, tukey_summary):
 
 # --- ページ設定 ---
 st.set_page_config(page_title="農業統計解析ツール", layout="wide")
-st.title("📊 農業データ・自動統計解析システム")
+st.title("📊 農業データ・自動統計解析システム (研修対応版)")
+
+# --- 🎓 新人研修用：統計用語ガイド（サイドバー） ---
+with st.sidebar.expander("🎓 新人研修向け：統計用語ガイド"):
+    st.markdown("""
+    **💡 P値 (P-value) とは？**
+    「この結果が偶然起きた確率」です。**0.05 (5%) 未満**なら「偶然とは考えにくい＝意味のある差（有意差）がある」と判断するのが農業試験の基本です。
+    
+    **💡 アルファベット (a, b, c) の意味**
+    グラフの上の文字は「多重比較」の結果です。**違う文字**がついているグループ同士には有意差があります。（例：a と b は差がある。ab は a とも b とも差がない）
+    
+    **💡 どの分布を選ぶべき？**
+    * **正規分布:** 収量(kg)、草丈(cm)、糖度(Brix)など「連続した数字」
+    * **二項分布:** 発芽率、病害発生率など「全体の何%か」
+    * **ポアソン分布:** 虫害数、腐敗数など「数えられるもの（0以上の整数）」
+    * **ノンパラ (順序):** 発生程度(1〜4)、食味スコアなど「ランク分けされたもの」
+    """)
 
 # --- 1. サイドバー：解析の目的とモード選択 ---
 st.sidebar.header("⚙️ 1. 解析の目的")
 analysis_purpose = st.sidebar.radio(
     "どちらの解析を行いますか？",
-    ["📊 要因解析 (カテゴリ比較・多重比較)", "📈 回帰解析 (数値からの予測・回帰曲線)"]
+    ["📊 要因解析 (カテゴリ比較・多重比較)", "📈 回帰解析 (数値からの予測・回帰曲線)"],
+    help="グループ間の違いを見たいなら「要因解析」、温度や量から結果を予測したいなら「回帰解析」を選びます。"
 )
 
 st.sidebar.header("⚙️ 2. データ分布の選択")
@@ -56,11 +73,12 @@ mode = st.sidebar.selectbox(
     ["📦 収量など (正規分布/OLS)", 
      "🌱 発芽率など (二項分布/Logit)", 
      "🐛 虫害・腐敗数など (ポアソン/Log)",
-     "🗂️ 発生程度1-4など順序データ (ノンパラ/Kruskal-Wallis)"]
+     "🗂️ 発生程度1-4など順序データ (ノンパラ/Kruskal-Wallis)"],
+    help="上の「統計用語ガイド」を参考に、自分が調べたいデータに合ったものを選択してください。"
 )
 
 st.sidebar.header("⚙️ 3. データの入力")
-data_source = st.sidebar.radio("入力方法：", ["🧪 サンプルデータで試す", "📁 CSVアップロード"])
+data_source = st.sidebar.radio("入力方法：", ["🧪 サンプルデータで試す", "📁 CSVアップロード"], help="最初はサンプルデータで動きを確認してみましょう。")
 
 # --- 2. サンプルデータの自動生成 ---
 if data_source == "🧪 サンプルデータで試す":
@@ -76,9 +94,9 @@ if data_source == "🧪 サンプルデータで試す":
             '発芽数': np.concatenate([np.random.binomial(100, 0.90, n_grp), np.random.binomial(100, 0.50, n_grp), np.random.binomial(100, 0.15, n_grp)]),
             '腐敗数': np.concatenate([np.random.poisson(2, n_grp), np.random.poisson(10, n_grp), np.random.poisson(25, n_grp)]),
             '発生程度': np.concatenate([
-                np.random.choice([1, 2], n_grp, p=[0.8, 0.2]),       # 10度: ほぼ1
-                np.random.choice([1, 2, 3], n_grp, p=[0.2, 0.6, 0.2]), # 20度: 中心は2
-                np.random.choice([3, 4], n_grp, p=[0.4, 0.6])        # 30度: 3か4のみ
+                np.random.choice([1, 2], n_grp, p=[0.8, 0.2]),       
+                np.random.choice([1, 2, 3], n_grp, p=[0.2, 0.6, 0.2]), 
+                np.random.choice([3, 4], n_grp, p=[0.4, 0.6])        
             ])
         })
     else:
@@ -89,7 +107,7 @@ if data_source == "🧪 サンプルデータで試す":
         sp = np.random.binomial(100, p)
         y_poi = np.random.poisson(np.exp(0.09 * x))
         df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '収量': y_ols, '全数': 100, '発芽数': sp, '腐敗数': y_poi})
-    st.success(f"✅ {mode.split()[1]} 用のサンプルデータを読み込みました。")
+    st.success(f"✅ 研修用のサンプルデータ（{mode.split()[1]}用）を読み込みました。")
 else:
     uploaded_file = st.sidebar.file_uploader("CSV選択", type="csv")
     df = pd.read_csv(uploaded_file) if uploaded_file else None
@@ -100,30 +118,30 @@ if df is not None:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if "収量" in mode: target = st.selectbox("目的変数 (Y軸)", df.columns, index=df.columns.get_loc('収量') if '収量' in df.columns else len(df.columns)-1)
+        if "収量" in mode: target = st.selectbox("目的変数 (Y軸)", df.columns, index=df.columns.get_loc('収量') if '収量' in df.columns else len(df.columns)-1, help="解析したい結果のデータ（例：収量）を選びます。")
         elif "発芽率" in mode:
-            sp_col = st.selectbox("カウント数 (分子)", df.columns, index=df.columns.get_loc('発芽数') if '発芽数' in df.columns else 0)
-            tt_col = st.selectbox("全数 (分母)", df.columns, index=df.columns.get_loc('全数') if '全数' in df.columns else 0)
+            sp_col = st.selectbox("カウント数 (分子)", df.columns, index=df.columns.get_loc('発芽数') if '発芽数' in df.columns else 0, help="発生した数（例：発芽した数）を選びます。")
+            tt_col = st.selectbox("全数 (分母)", df.columns, index=df.columns.get_loc('全数') if '全数' in df.columns else 0, help="調査したすべての数を選びます。")
             df['ratio'] = df[sp_col] / df[tt_col]
             target = 'ratio'
-        elif "順序データ" in mode: target = st.selectbox("順序データ (1,2,3...)", df.columns, index=df.columns.get_loc('発生程度') if '発生程度' in df.columns else len(df.columns)-1)
-        else: target = st.selectbox("カウント数 (Y軸)", df.columns, index=df.columns.get_loc('腐敗数') if '腐敗数' in df.columns else len(df.columns)-1)
+        elif "順序データ" in mode: target = st.selectbox("順序データ (1,2,3...)", df.columns, index=df.columns.get_loc('発生程度') if '発生程度' in df.columns else len(df.columns)-1, help="1,2,3,4のようなランクデータを選びます。")
+        else: target = st.selectbox("カウント数 (Y軸)", df.columns, index=df.columns.get_loc('腐敗数') if '腐敗数' in df.columns else len(df.columns)-1, help="虫の数や腐敗数など、数えたデータを選びます。")
 
     with col2:
         if "要因解析" in analysis_purpose:
-            fx = st.selectbox("主要因 (比較カテゴリ)", df.columns, index=df.columns.get_loc('温度') if '温度' in df.columns else 0)
+            fx = st.selectbox("主要因 (比較カテゴリ)", df.columns, index=df.columns.get_loc('温度') if '温度' in df.columns else 0, help="比較したいグループ（例：品種名、処理区）を選びます。")
         else:
-            fx = st.selectbox("主要因 (X軸の数値)", df.columns, index=0)
+            fx = st.selectbox("主要因 (X軸の数値)", df.columns, index=0, help="予測の元になる数値（例：温度や施肥量など）を選びます。")
             
     with col3:
         if "要因解析" in analysis_purpose:
             if "順序データ" in mode:
-                st.info("※ノンパラ検定では副要因による色分け・交互作用判定は行いません。")
+                st.info("※ノンパラ検定では副要因による色分けは行いません。")
                 fs = None
             else:
-                fs = st.selectbox("副要因 (色分け/処理など)", df.columns, index=1 if len(df.columns)>1 else 0)
+                fs = st.selectbox("副要因 (色分け/処理など)", df.columns, index=1 if len(df.columns)>1 else 0, help="別の要因でグラフを色分けしたい場合に選びます。")
         else:
-            st.info("※回帰解析モードでは、全体の傾向を単回帰モデルで算出します。")
+            st.info("※回帰解析モードでは全体の傾向を算出します。")
             fs = None
 
     if st.button("🚀 解析を実行"):
@@ -136,10 +154,12 @@ if df is not None:
         fig, ax = plt.subplots(figsize=(10, 6))
         
         try:
+            # ==========================================
+            # A: 要因解析モード
+            # ==========================================
             if "要因解析" in analysis_purpose:
                 df_clean[fx] = df_clean[fx].astype(str)
                 
-                # 🌟 ノンパラメトリック検定（Steel-Dwass対応） 🌟
                 if "順序データ" in mode:
                     st.subheader("1. Kruskal-Wallis 検定 (全体に差があるか)")
                     groups_data = [df_clean[df_clean[fx] == g][target] for g in df_clean[fx].unique()]
@@ -149,7 +169,6 @@ if df is not None:
                     else: st.warning("💡 P >= 0.05：有意差は認められませんでした。")
 
                     st.subheader(f"2. {fx} の多重比較 (Steel-Dwass検定)")
-                    # scikit-posthocsによるSteel-Dwass (DSCF)
                     res_matrix = sp.posthoc_dscf(df_clean, val_col=target, group_col=fx)
                     
                     groups = df_clean[fx].unique()
@@ -177,7 +196,6 @@ if df is not None:
                     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
                     st.pyplot(fig)
 
-                # パラメトリック検定（ANOVA / GLM）
                 else:
                     if "収量" in mode:
                         model = smf.ols(f'Q("{target}") ~ C(Q("{fx}")) + C(Q("{fs}"))', data=df_clean).fit()
@@ -214,6 +232,9 @@ if df is not None:
                         ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
                     st.pyplot(fig)
 
+            # ==========================================
+            # B: 回帰解析モード
+            # ==========================================
             else:
                 if "順序データ" in mode:
                     st.warning("⚠️ 順序データ（1,2,3,4）に対する単純な回帰曲線は推奨されません。要因解析モードをお使いください。")
