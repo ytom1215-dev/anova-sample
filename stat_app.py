@@ -103,9 +103,9 @@ if data_source == "🧪 サンプルデータで試す":
         x = np.linspace(10, 40, n)
         y_ols = 4.5 * x + 100 + np.random.normal(0, 8, n)
         p = 1 / (1 + np.exp(-0.3 * (x - 25)))
-        sp = np.random.binomial(100, p)
+        sp_counts = np.random.binomial(100, p)
         y_poi = np.random.poisson(np.exp(0.09 * x))
-        df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '収量': y_ols, '全数': 100, '発芽数': sp, '腐敗数': y_poi})
+        df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '収量': y_ols, '全数': 100, '発芽数': sp_counts, '腐敗数': y_poi})
     st.success(f"✅ 研修用のサンプルデータ（{mode.split()[1]}用）を読み込みました。")
 else:
     uploaded_file = st.sidebar.file_uploader("CSV選択", type="csv")
@@ -117,14 +117,17 @@ if df is not None:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if "収量" in mode: target = st.selectbox("目的変数 (Y軸)", df.columns, index=df.columns.get_loc('収量') if '収量' in df.columns else len(df.columns)-1)
+        if "収量" in mode: 
+            target = st.selectbox("目的変数 (Y軸)", df.columns, index=df.columns.get_loc('収量') if '収量' in df.columns else len(df.columns)-1)
         elif "発芽率" in mode:
             sp_col = st.selectbox("カウント数 (分子)", df.columns, index=df.columns.get_loc('発芽数') if '発芽数' in df.columns else 0)
             tt_col = st.selectbox("全数 (分母)", df.columns, index=df.columns.get_loc('全数') if '全数' in df.columns else 0)
             df['ratio'] = df[sp_col] / df[tt_col]
             target = 'ratio'
-        elif "順序データ" in mode: target = st.selectbox("順序データ (1,2,3...)", df.columns, index=df.columns.get_loc('発生程度') if '発生程度' in df.columns else len(df.columns)-1)
-        else: target = st.selectbox("カウント数 (Y軸)", df.columns, index=df.columns.get_loc('腐敗数') if '腐敗数' in df.columns else len(df.columns)-1)
+        elif "順序データ" in mode: 
+            target = st.selectbox("順序データ (1,2,3...)", df.columns, index=df.columns.get_loc('発生程度') if '発生程度' in df.columns else len(df.columns)-1)
+        else: 
+            target = st.selectbox("カウント数 (Y軸)", df.columns, index=df.columns.get_loc('腐敗数') if '腐敗数' in df.columns else len(df.columns)-1)
 
     with col2:
         if "要因解析" in analysis_purpose:
@@ -152,7 +155,6 @@ if df is not None:
         plt.rcParams['font.family'] = 'IPAexGothic'
         fig, ax = plt.subplots(figsize=(10, 6))
         
-        # 中級者向けコード生成用の変数
         code_snippet = ""
         
         try:
@@ -190,47 +192,14 @@ if df is not None:
                     sns.stripplot(x=fx, y=target, data=df_clean, ax=ax, color=".3", alpha=0.6, jitter=True, order=grp_ord)
                     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
                     
-                    # 💻 スクリプト生成
-                    code_snippet = f"""import pandas as pd
-import scipy.stats as stats
-import scikit_posthocs as sp
-
-# データの読み込み
-df = pd.read_csv("your_data.csv")
-
-# Kruskal-Wallis検定
-groups_data = [df[df['{fx}'] == g]['{target}'] for g in df['{fx}'].unique()]
-stat, p_val = stats.kruskal(*groups_data)
-print(f"Kruskal-Wallis P値: {{p_val}}")
-
-# Steel-Dwass検定 (多重比較)
-res_matrix = sp.posthoc_dscf(df, val_col='{target}', group_col='{fx}')
-print(res_matrix)
-"""
+                    code_snippet = f"""import pandas as pd\nimport scipy.stats as stats\nimport scikit_posthocs as sp\n\ndf = pd.read_csv("your_data.csv")\ngroups_data = [df[df['{fx}'] == g]['{target}'] for g in df['{fx}'].unique()]\nstat, p_val = stats.kruskal(*groups_data)\nprint(f"Kruskal-Wallis P値: {{p_val}}")\nres_matrix = sp.posthoc_dscf(df, val_col='{target}', group_col='{fx}')\nprint(res_matrix)"""
 
                 else:
                     if "収量" in mode:
                         model = smf.ols(formula_str, data=df_clean).fit()
                         st.subheader("1. 分散分析表 (ANOVA)")
                         st.table(sm.stats.anova_lm(model, typ=2))
-                        
-                        # 💻 スクリプト生成
-                        code_snippet = f"""import pandas as pd
-import statsmodels.api as sm
-import statsmodels.formula.api as smf
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
-# データの読み込み
-df = pd.read_csv("your_data.csv")
-
-# 分散分析 (ANOVA)
-model = smf.ols('{formula_str.replace('Q("', '').replace('")', '')}', data=df).fit()
-print(sm.stats.anova_lm(model, typ=2))
-
-# Tukeyの多重比較
-tukey = pairwise_tukeyhsd(df['{target}'], df['{fx}'])
-print(tukey.summary())
-"""
+                        code_snippet = f"""import pandas as pd\nimport statsmodels.api as sm\nimport statsmodels.formula.api as smf\nfrom statsmodels.stats.multicomp import pairwise_tukeyhsd\n\ndf = pd.read_csv("your_data.csv")\nmodel = smf.ols('{formula_str.replace('Q("', '').replace('")', '')}', data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))\ntukey = pairwise_tukeyhsd(df['{target}'], df['{fx}'])\nprint(tukey.summary())"""
                     else:
                         if "発芽率" in mode:
                             df_clean['not_sp'] = df_clean[tt_col] - df_clean[sp_col]
@@ -248,26 +217,7 @@ print(tukey.summary())
                         st.subheader("1. 偏差分析 (カイ二乗検定)")
                         w_res = model.wald_test_terms().summary_frame()
                         st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
-                        
-                        # 💻 スクリプト生成
-                        code_snippet = f"""import pandas as pd
-import statsmodels.api as sm
-import statsmodels.formula.api as smf
-from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
-df = pd.read_csv("your_data.csv")
-{'df["not_sp"] = df["' + tt_col + '"] - df["' + sp_col + '"]' if "発芽率" in mode else ''}
-
-# 一般化線形モデル (GLM)
-model = smf.glm({code_formula}, data=df, family={family_str}).fit()
-
-# カイ二乗検定
-print(model.wald_test_terms().summary_frame())
-
-# Tukeyの多重比較
-tukey = pairwise_tukeyhsd(df['{target}'], df['{fx}'])
-print(tukey.summary())
-"""
+                        code_snippet = f"""import pandas as pd\nimport statsmodels.api as sm\nimport statsmodels.formula.api as smf\nfrom statsmodels.stats.multicomp import pairwise_tukeyhsd\n\ndf = pd.read_csv("your_data.csv")\n{'df["not_sp"] = df["' + tt_col + '"] - df["' + sp_col + '"]' if "発芽率" in mode else ''}\nmodel = smf.glm({code_formula}, data=df, family={family_str}).fit()\nprint(model.wald_test_terms().summary_frame())\ntukey = pairwise_tukeyhsd(df['{target}'], df['{fx}'])\nprint(tukey.summary())"""
 
                     st.subheader(f"2. {fx} の多重比較 (Tukey HSD)")
                     tukey = pairwise_tukeyhsd(df_clean[target], df_clean[fx])
@@ -279,7 +229,14 @@ print(tukey.summary())
                     
                     if "収量" in mode: sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
                     else: sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
-                    
+                
+                # 📊 グラフの仕上げ (要因解析時のみアルファベットを付与)
+                for i, g in enumerate(grp_ord):
+                    l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
+                    y_val = df_clean[df_clean[fx] == g][target].max()
+                    y_offset = df_clean[target].max() * 0.05 if df_clean[target].max() > 0 else 0.05
+                    ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
+
             # ==========================================
             # B: 回帰解析モード
             # ==========================================
@@ -293,65 +250,40 @@ print(tukey.summary())
                     model = smf.ols(f'Q("{target}") ~ Q("{fx}")', data=df_clean).fit()
                     st.subheader("1. 予測モデル (直線回帰)")
                     sns.regplot(x=fx, y=target, data=df_clean, ax=ax, scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
-                    
-                    # 💻 スクリプト生成
-                    code_snippet = f"""import pandas as pd
-import statsmodels.formula.api as smf
-
-df = pd.read_csv("your_data.csv")
-model = smf.ols('{target} ~ {fx}', data=df).fit()
-print(model.summary())
-"""
+                    code_snippet = f"""import pandas as pd\nimport statsmodels.formula.api as smf\n\ndf = pd.read_csv("your_data.csv")\nmodel = smf.ols('{target} ~ {fx}', data=df).fit()\nprint(model.summary())"""
+                
                 elif "発芽率" in mode:
                     df_clean['not_sp'] = df_clean[tt_col] - df_clean[sp_col]
                     model = smf.glm(f'Q("{sp_col}") + not_sp ~ Q("{fx}")', data=df_clean, family=sm.families.Binomial()).fit()
-                    a, b = model.params[1], model.params[0]
                     st.subheader("1. 予測モデル (ロジスティック回帰)")
                     x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
-                    ax.plot(x_range, 1 / (1 + np.exp(-(a * x_range + b))), color='red', lw=3)
-                    ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
                     
-                    # 💻 スクリプト生成
-                    code_snippet = f"""import pandas as pd
-import statsmodels.api as sm
-import statsmodels.formula.api as smf
-
-df = pd.read_csv("your_data.csv")
-df['not_sp'] = df['{tt_col}'] - df['{sp_col}']
-
-model = smf.glm('{sp_col} + not_sp ~ {fx}', data=df, family=sm.families.Binomial()).fit()
-print(model.summary())
-"""
+                    # predictを使って安全に曲線を生成
+                    pred_df = pd.DataFrame({fx: x_range})
+                    y_pred = model.predict(pred_df)
+                    
+                    ax.plot(x_range, y_pred, color='red', lw=3)
+                    ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
+                    code_snippet = f"""import pandas as pd\nimport statsmodels.api as sm\nimport statsmodels.formula.api as smf\n\ndf = pd.read_csv("your_data.csv")\ndf['not_sp'] = df['{tt_col}'] - df['{sp_col}']\nmodel = smf.glm('{sp_col} + not_sp ~ {fx}', data=df, family=sm.families.Binomial()).fit()\nprint(model.summary())"""
+                
                 else:
                     model = smf.glm(f'Q("{target}") ~ Q("{fx}")', data=df_clean, family=sm.families.Poisson()).fit()
-                    a, b = model.params[1], model.params[0]
                     st.subheader("1. 予測モデル (ポアソン回帰)")
                     x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
-                    ax.plot(x_range, np.exp(a * x_range + b), color='red', lw=3)
-                    ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
                     
-                    # 💻 スクリプト生成
-                    code_snippet = f"""import pandas as pd
-import statsmodels.api as sm
-import statsmodels.formula.api as smf
-
-df = pd.read_csv("your_data.csv")
-model = smf.glm('{target} ~ {fx}', data=df, family=sm.families.Poisson()).fit()
-print(model.summary())
-"""
+                    # predictを使って安全に曲線を生成
+                    pred_df = pd.DataFrame({fx: x_range})
+                    y_pred = model.predict(pred_df)
+                    
+                    ax.plot(x_range, y_pred, color='red', lw=3)
+                    ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
+                    code_snippet = f"""import pandas as pd\nimport statsmodels.api as sm\nimport statsmodels.formula.api as smf\n\ndf = pd.read_csv("your_data.csv")\nmodel = smf.glm('{target} ~ {fx}', data=df, family=sm.families.Poisson()).fit()\nprint(model.summary())"""
 
                 st.write("### 2. モデルの詳細要約")
                 with st.expander("詳細を表示"):
                     st.text(model.summary())
             
-            # グラフの仕上げ
-            if "要因解析" not in analysis_purpose or "順序データ" not in mode:
-                for i, g in enumerate(grp_ord if "要因解析" in analysis_purpose else []):
-                    l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
-                    y_val = df_clean[df_clean[fx] == g][target].max()
-                    y_offset = df_clean[target].max() * 0.05 if df_clean[target].max() > 0 else 0.05
-                    ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
-            
+            # --- グラフの描画 ---
             st.pyplot(fig)
 
             # ==========================================
@@ -359,7 +291,7 @@ print(model.summary())
             # ==========================================
             st.divider()
             with st.expander("👩‍💻 中級者向け：この解析のPythonスクリプトを確認する"):
-                st.markdown("このアプリの裏側で実行されている、Pythonライブラリ（`statsmodels`, `scipy`）を用いた統計解析のコードです。ご自身のJupyter Notebookなどで実行する際のテンプレートとして活用してください。")
+                st.markdown("このアプリの裏側で実行されている、Pythonライブラリを用いた統計解析のコードです。")
                 st.code(code_snippet, language="python")
 
         except Exception as e:
