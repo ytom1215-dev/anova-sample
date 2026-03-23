@@ -78,7 +78,7 @@ if data_source == "🧪 サンプルデータで試す":
         n_grp = 15
         df = pd.DataFrame({
             '品種': ['品種A']*n_grp +['品種B']*n_grp + ['品種C']*n_grp,
-            '温度': ['10度']*15 + ['20度']*15 + ['30度']*15,
+            '温度':['10度']*15 + ['20度']*15 + ['30度']*15,
             '処理':['標準', '多量', '少量'] * 15,
             '収量': np.concatenate([np.random.normal(280, 10, n_grp), np.random.normal(230, 10, n_grp), np.random.normal(180, 10, n_grp)]).astype(int),
             '全数': [100] * 45,
@@ -92,7 +92,6 @@ if data_source == "🧪 サンプルデータで試す":
 else:
     uploaded_file = st.sidebar.file_uploader("分析するCSVファイルを選択", type="csv")
     if uploaded_file is not None:
-        # 【改善1】Excel出力のCSVによくある Shift-JIS (cp932) の文字化けエラーを自動回避
         try:
             df = pd.read_csv(uploaded_file, encoding='utf-8')
         except UnicodeDecodeError:
@@ -138,12 +137,10 @@ with col3:
             fs = st.selectbox("副要因 (色分け/処理など)", ["なし"] + list(df.columns), index=0)
             if fs == "なし": fs = None
             else:
-                # 【改善2】副要因がある場合、交互作用の有無を選択できるように追加
                 interaction_choice = st.radio("交互作用の考慮", ["なし (+)", "あり (*)"], horizontal=True)
                 interaction_op = "*" if "あり" in interaction_choice else "+"
     else: fs = None
 
-# 【改善4】設定変更で結果が消えないようにセッションステートでボタンの状態を管理
 if 'run_clicked' not in st.session_state:
     st.session_state.run_clicked = False
 
@@ -168,7 +165,7 @@ if st.session_state.run_clicked:
     plt.rcParams['font.family'] = 'IPAexGothic'
     fig, ax = plt.subplots(figsize=(10, 6))
     code_snippet = ""
-    download_df = None # ダウンロード用データ
+    download_df = None
     
     try:
         # ------------------------------------------
@@ -213,7 +210,10 @@ if st.session_state.run_clicked:
                     model = smf.ols(formula_str, data=df_clean).fit()
                     st.subheader("1. 全体の検定結果 (分散分析: ANOVA)")
                     st.table(sm.stats.anova_lm(model, typ=2))
-                    code_snippet = f"model = smf.ols('{formula_str.replace('Q(\"', '').replace('\")', '')}', data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))"
+                    
+                    # f-string の構文エラー回避のため、一度変数をキレイにする
+                    clean_formula = formula_str.replace('Q("', '').replace('")', '')
+                    code_snippet = f"model = smf.ols('{clean_formula}', data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))"
                 else:
                     if "割合" in mode:
                         df_clean['not_sp'] = df_clean[tt_col] - df_clean[sp_col]
@@ -248,9 +248,8 @@ if st.session_state.run_clicked:
                 y_offset = df_clean[target].max() * 0.05 if df_clean[target].max() > 0 else 0.05
                 ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
 
-            # 【改善3】結果のエクスポートボタン
             if download_df is not None:
-                csv = download_df.to_csv(index=False).encode('utf-8-sig') # Excelで文字化けしないBOM付きUTF-8
+                csv = download_df.to_csv(index=False).encode('utf-8-sig')
                 st.download_button(label="📥 多重比較の結果をCSVでダウンロード", data=csv, file_name='tukey_results.csv', mime='text/csv')
 
         # ------------------------------------------
@@ -277,15 +276,13 @@ if st.session_state.run_clicked:
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
 
             st.subheader("1. 予測モデルの回帰グラフ")
-            st.pyplot(fig) # 回帰モードはここで描画
+            st.pyplot(fig)
             st.write("### 2. モデルの詳細要約")
             with st.expander("詳細を表示"): st.text(model.summary())
             
-            # 回帰の要約をCSV化
             summary_csv = model.summary().as_csv()
             st.download_button("📥 サマリー結果をダウンロード", data=summary_csv.encode('utf-8-sig'), file_name='regression_summary.csv', mime='text/csv')
 
-        # 要因解析モードのグラフ描画
         if "要因解析" in analysis_purpose:
             st.pyplot(fig)
 
