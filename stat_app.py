@@ -21,7 +21,7 @@ def get_cld_letters(df, target, group, tukey_summary):
     current_letter = ord('a')
     for i in range(len(groups)):
         g1 = groups[i]
-        non_diff = [g1]
+        non_diff =[g1]
         for j in range(i + 1, len(groups)):
             g2 = groups[j]
             mask = ((tukey_summary['group1'].astype(str) == g1) & (tukey_summary['group2'].astype(str) == g2)) | \
@@ -72,6 +72,7 @@ mode = st.sidebar.selectbox("データの種類",["📦 連続値：収量・草
 # 📊 データの読み込み (文字化け対策付き)
 # ==========================================
 df = None
+uploaded_file = None
 if data_source == "🧪 サンプルデータで試す":
     np.random.seed(42)
     if "要因解析" in analysis_purpose:
@@ -81,7 +82,7 @@ if data_source == "🧪 サンプルデータで試す":
             '温度':['10度']*15 + ['20度']*15 + ['30度']*15,
             '処理':['標準', '多量', '少量'] * 15,
             '収量': np.concatenate([np.random.normal(280, 10, n_grp), np.random.normal(230, 10, n_grp), np.random.normal(180, 10, n_grp)]).astype(int),
-            '全数': [100] * 45,
+            '全数':[100] * 45,
             '発芽数': np.concatenate([np.random.binomial(100, 0.90, n_grp), np.random.binomial(100, 0.50, n_grp), np.random.binomial(100, 0.15, n_grp)]),
             '腐敗数': np.concatenate([np.random.poisson(2, n_grp), np.random.poisson(10, n_grp), np.random.poisson(25, n_grp)]),
             '発生程度': np.concatenate([np.random.choice([1, 2], n_grp, p=[0.8, 0.2]), np.random.choice([1, 2, 3], n_grp, p=[0.2, 0.6, 0.2]), np.random.choice([3, 4], n_grp, p=[0.4, 0.6])])
@@ -141,14 +142,39 @@ with col3:
                 interaction_op = "*" if "あり" in interaction_choice else "+"
     else: fs = None
 
-if 'run_clicked' not in st.session_state:
+
+# ==========================================
+# 💡 【改善点】変数が変わったら結果をリセットする仕組み
+# ==========================================
+current_settings = {
+    "data_source": data_source,
+    "file_name": uploaded_file.name if data_source == "📁 CSVアップロード" and uploaded_file is not None else None,
+    "analysis_purpose": analysis_purpose,
+    "mode": mode,
+    "target": target,
+    "sp_col": sp_col if "割合" in mode else None,
+    "tt_col": tt_col if "割合" in mode else None,
+    "fx": fx,
+    "fs": fs,
+    "interaction": interaction_op
+}
+
+# 初回起動時の初期化
+if 'last_settings' not in st.session_state:
+    st.session_state.last_settings = current_settings
     st.session_state.run_clicked = False
+
+# ユーザーが変数を変更したことを検知して、ボタンの実行状態を解除（False）する
+if st.session_state.last_settings != current_settings:
+    st.session_state.run_clicked = False
+    st.session_state.last_settings = current_settings
 
 def handle_click():
     st.session_state.run_clicked = True
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.button("🚀 解析を実行", type="primary", use_container_width=True, on_click=handle_click)
+
 
 # ==========================================
 # 🚀 実行結果 (Step 3)
@@ -157,7 +183,7 @@ if st.session_state.run_clicked:
     st.divider()
     st.markdown("### 📊 3. 解析結果")
     
-    use_cols = [target, fx] if fs is None else [target, fx, fs]
+    use_cols =[target, fx] if fs is None else [target, fx, fs]
     if "割合" in mode: use_cols.extend([sp_col, tt_col])
     df_clean = df.dropna(subset=[c for c in use_cols if c in df.columns]).copy()
 
@@ -211,7 +237,6 @@ if st.session_state.run_clicked:
                     st.subheader("1. 全体の検定結果 (分散分析: ANOVA)")
                     st.table(sm.stats.anova_lm(model, typ=2))
                     
-                    # f-string の構文エラー回避のため、一度変数をキレイにする
                     clean_formula = formula_str.replace('Q("', '').replace('")', '')
                     code_snippet = f"model = smf.ols('{clean_formula}', data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))"
                 else:
