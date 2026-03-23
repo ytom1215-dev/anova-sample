@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import japanize_matplotlib  # インポートするだけで日本語化されます
+import japanize_matplotlib
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
@@ -20,7 +20,6 @@ def get_cld_letters(df, target, group, tukey_summary):
     cld = {g:[] for g in groups}
     current_letter = ord('a')
     
-    # 文字列/Bool どちらが来ても安全に判定する関数
     def is_rejected(val):
         if isinstance(val, bool) or isinstance(val, np.bool_): return val
         return str(val).lower() == 'true'
@@ -75,7 +74,7 @@ mode = st.sidebar.selectbox("データの種類",["📦 連続値：収量・草
                                            "🗂️ 順序データ：発生程度スコアなど (ノンパラ/Kruskal-Wallis)"])
 
 # ==========================================
-# 📊 データの読み込み (文字化け対策付き)
+# 📊 データの読み込み
 # ==========================================
 df = None
 uploaded_file = None
@@ -84,8 +83,8 @@ if data_source == "🧪 サンプルデータで試す":
     if "要因解析" in analysis_purpose:
         n_grp = 15
         df = pd.DataFrame({
-            '品種': ['品種A']*n_grp +['品種B']*n_grp + ['品種C']*n_grp,
-            '温度':['10度']*15 +['20度']*15 + ['30度']*15,
+            '品種': ['品種A']*n_grp +['品種B']*n_grp +['品種C']*n_grp,
+            '温度':['10度']*15 + ['20度']*15 + ['30度']*15,
             '処理':['標準', '多量', '少量'] * 15,
             '収量': np.concatenate([np.random.normal(280, 10, n_grp), np.random.normal(230, 10, n_grp), np.random.normal(180, 10, n_grp)]).astype(int),
             '全数':[100] * 45,
@@ -144,18 +143,16 @@ with col3:
             fs = st.selectbox("副要因 (色分け/処理など)", ["なし"] + list(df.columns), index=0)
             if fs == "なし": fs = None
             else:
-                interaction_choice = st.radio("交互作用の考慮", ["なし (+)", "あり (*)"], horizontal=True)
+                interaction_choice = st.radio("交互作用の考慮",["なし (+)", "あり (*)"], horizontal=True)
                 interaction_op = "*" if "あり" in interaction_choice else "+"
     else: fs = None
 
 # ==========================================
-# 💡 変数が変わったら結果をリセットする仕組み
+# 💡 リセット管理
 # ==========================================
 current_settings = {
-    "data_source": data_source,
-    "file_name": uploaded_file.name if data_source == "📁 CSVアップロード" and uploaded_file is not None else None,
-    "analysis_purpose": analysis_purpose,
-    "mode": mode, "target": target, "fx": fx, "fs": fs, "interaction": interaction_op,
+    "data_source": data_source, "file_name": uploaded_file.name if uploaded_file else None,
+    "analysis_purpose": analysis_purpose, "mode": mode, "target": target, "fx": fx, "fs": fs, "interaction": interaction_op,
     "sp_col": sp_col if "割合" in mode else None, "tt_col": tt_col if "割合" in mode else None
 }
 
@@ -179,11 +176,19 @@ if st.session_state.run_clicked:
     st.divider()
     st.markdown("### 📊 3. 解析結果")
     
-    use_cols =[target, fx] if fs is None else [target, fx, fs]
+    use_cols =[target, fx] if fs is None else[target, fx, fs]
     if "割合" in mode: use_cols.extend([sp_col, tt_col])
     df_clean = df.dropna(subset=[c for c in use_cols if c in df.columns]).copy()
 
-    # 🛠️ 【超重要】日本語カラム名によるエラーを防ぐための安全な内部リネーム処理
+    # 🛑 【超重要】割合データのエラーの元を事前にチェックしてブロックする
+    if "割合" in mode:
+        if (df_clean[tt_col] == 0).any():
+            st.warning(f"⚠️ エラー：分母である「{tt_col}」に 0 が含まれています。0で割り算ができないため、データを確認してください。")
+            st.stop()
+        if (df_clean[sp_col] > df_clean[tt_col]).any() or (df_clean[sp_col] < 0).any():
+            st.warning(f"⚠️ エラー：分子が分母よりも大きい、またはマイナスのデータが含まれています。\n割合（確率）は必ず 0〜100% の範囲に収まる必要があります。データ入力ミスがないか確認してください。")
+            st.stop()
+
     rename_dict = {target: 'Y_val', fx: 'X_factor'}
     if fs: rename_dict[fs] = 'F_factor'
     if "割合" in mode: rename_dict[tt_col] = 'Total_n'
@@ -203,7 +208,6 @@ if st.session_state.run_clicked:
             if fs: df_model['F_factor'] = df_model['F_factor'].astype(str)
             formula_str = f'Y_val ~ C(X_factor) {interaction_op} C(F_factor)' if fs else 'Y_val ~ C(X_factor)'
             
-            # ① 順序データ
             if "順序" in mode:
                 st.subheader("1. 全体の検定結果 (Kruskal-Wallis検定)")
                 groups_data =[df_model[df_model['X_factor'] == g]['Y_val'] for g in df_model['X_factor'].unique()]
@@ -222,8 +226,6 @@ if st.session_state.run_clicked:
                 
                 res_df = pd.DataFrame(res)
                 let_df, grp_ord = get_cld_letters(df_model, 'Y_val', 'X_factor', res_df)
-                
-                # 出力用に名前を元に戻す
                 download_df = res_df.rename(columns={'group1': f'{fx}_1', 'group2': f'{fx}_2'})
                 
                 c_l, c_r = st.columns([2, 1])
@@ -233,22 +235,30 @@ if st.session_state.run_clicked:
                 sns.boxplot(x=fx, y=target, data=df_clean, ax=ax, palette="Set2", order=grp_ord, showfliers=False)
                 sns.stripplot(x=fx, y=target, data=df_clean, ax=ax, color=".3", alpha=0.6, jitter=True, order=grp_ord)
                 ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+                
+                code_snippet = f"import scipy.stats as stats\nimport scikit_posthocs as sp\nstat, p_val = stats.kruskal(*groups_data)\nres_matrix = sp.posthoc_dscf(df, val_col='{target}', group_col='{fx}')"
 
-            # ② それ以外
             else:
+                op_str = "*" if interaction_op == "*" else "+"
+                real_formula = f"'{target} ~ C({fx}) {op_str} C({fs})'" if fs else f"'{target} ~ C({fx})'"
+
                 if "連続値" in mode:
                     model = smf.ols(formula_str, data=df_model).fit()
                     st.subheader("1. 全体の検定結果 (分散分析: ANOVA)")
                     anova_table = sm.stats.anova_lm(model, typ=2)
                     anova_table.rename(index={'C(X_factor)': fx, 'C(F_factor)': fs, 'C(X_factor):C(F_factor)': f'{fx}:{fs}'}, inplace=True)
                     st.table(anova_table)
+                    code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\nmodel = smf.ols({real_formula}, data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))"
                 else:
                     if "割合" in mode:
+                        real_formula = f"'ratio ~ C({fx}) {op_str} C({fs})'" if fs else f"'ratio ~ C({fx})'"
                         family = sm.families.Binomial()
                         model = smf.glm(formula_str, data=df_model, family=family, var_weights=np.asarray(df_model['Total_n'])).fit()
+                        code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\ndf['ratio'] = df['{sp_col}'] / df['{tt_col}']\nmodel = smf.glm({real_formula}, data=df, family=sm.families.Binomial(), var_weights=df['{tt_col}']).fit()\nprint(model.wald_test_terms().summary_frame())"
                     else:
                         family = sm.families.Poisson()
                         model = smf.glm(formula_str, data=df_model, family=family).fit()
+                        code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\nmodel = smf.glm({real_formula}, data=df, family=sm.families.Poisson()).fit()\nprint(model.wald_test_terms().summary_frame())"
                         
                     st.subheader("1. 全体の検定結果 (尤度比 / カイ二乗検定)")
                     w_res = model.wald_test_terms().summary_frame()
@@ -256,26 +266,20 @@ if st.session_state.run_clicked:
                     st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
 
                 st.subheader(f"2. {fx} の多重比較 (Tukey HSD検定)")
-                if fs is not None:
-                    st.info(f"💡 【補足】多重比較（Tukey検定）は全体の傾向を見るため、主要因「{fx}」間のみで実施しています。")
+                if fs is not None: st.info(f"💡 【補足】多重比較（Tukey検定）は全体の傾向を見るため、主要因「{fx}」間のみで実施しています。")
 
                 tukey = pairwise_tukeyhsd(df_model['Y_val'], df_model['X_factor'])
                 tk_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
                 let_df, grp_ord = get_cld_letters(df_model, 'Y_val', 'X_factor', tk_df)
-                
-                # 出力用に名前を元に戻す
                 download_df = tk_df.rename(columns={'group1': f'{fx}_1', 'group2': f'{fx}_2'})
                 
                 c_l, c_r = st.columns([2, 1])
                 c_l.dataframe(download_df)
                 c_r.dataframe(let_df.rename(columns={'groups_name': fx}))
                 
-                if "連続値" in mode: 
-                    sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
-                else: 
-                    sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
+                if "連続値" in mode: sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
+                else: sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
             
-            # アルファベット付与 (副要因がない場合のみ描画)
             if fs is None:
                 for i, g in enumerate(grp_ord):
                     l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
@@ -303,14 +307,21 @@ if st.session_state.run_clicked:
             if "連続値" in mode:
                 model = smf.ols('Y_val ~ X_factor', data=df_model).fit()
                 sns.regplot(x=fx, y=target, data=df_clean, ax=ax, scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
+                code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\nmodel = smf.ols('{target} ~ {fx}', data=df).fit()\nprint(model.summary())"
+            
             elif "割合" in mode:
                 model = smf.glm('Y_val ~ X_factor', data=df_model, family=sm.families.Binomial(), var_weights=np.asarray(df_model['Total_n'])).fit()
                 ax.plot(x_range, model.predict(pred_df), color='red', lw=3)
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
+                # 確率らしくY軸を0〜1に固定して見やすくする
+                ax.set_ylim(-0.05, 1.05)
+                code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\ndf['ratio'] = df['{sp_col}'] / df['{tt_col}']\nmodel = smf.glm('ratio ~ {fx}', data=df, family=sm.families.Binomial(), var_weights=df['{tt_col}']).fit()\nprint(model.summary())"
+            
             else:
                 model = smf.glm('Y_val ~ X_factor', data=df_model, family=sm.families.Poisson()).fit()
                 ax.plot(x_range, model.predict(pred_df), color='red', lw=3)
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
+                code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\nmodel = smf.glm('{target} ~ {fx}', data=df, family=sm.families.Poisson()).fit()\nprint(model.summary())"
 
             st.subheader("1. 予測モデルの回帰グラフ")
             st.pyplot(fig)
@@ -321,5 +332,14 @@ if st.session_state.run_clicked:
             summary_csv = model.summary().as_csv()
             st.download_button("📥 サマリー結果をダウンロード", data=summary_csv.encode('utf-8-sig'), file_name='regression_summary.csv', mime='text/csv')
 
+        st.divider()
+        with st.expander("👩‍💻 中級者向け：この解析のPythonスクリプトを確認する"):
+            st.code(code_snippet, language="python")
+
     except Exception as e:
-        st.error(f"⚠️ 解析中にエラーが発生しました。\n選択した変数やデータの形式が正しいか確認してください。\n\n詳細: {e}")
+        error_msg = str(e)
+        # Poissonという単語がエラーに混入するstatsmodels特有のバグに対する翻訳
+        if "Poisson" in error_msg and "割合" in mode:
+            st.error("⚠️ 解析中にエラーが発生しました。\n二項分布（割合データ）の計算を行おうとしましたが、データが極端に偏っている（例：ある温度以上で必ず100%発芽するなど）ため、モデルが計算できずエラーになりました。（※完全分離という現象です）")
+        else:
+            st.error(f"⚠️ 解析中にエラーが発生しました。\n選択した変数やデータの形式が正しいか確認してください。\n\n詳細: {error_msg}")
