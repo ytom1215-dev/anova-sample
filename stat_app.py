@@ -84,7 +84,7 @@ if data_source == "🧪 サンプルデータで試す":
         n_grp = 15
         df = pd.DataFrame({
             '品種': ['品種A']*n_grp +['品種B']*n_grp +['品種C']*n_grp,
-            '温度':['10度']*15 + ['20度']*15 + ['30度']*15,
+            '温度':['10度']*15 +['20度']*15 + ['30度']*15,
             '処理':['標準', '多量', '少量'] * 15,
             '収量': np.concatenate([np.random.normal(280, 10, n_grp), np.random.normal(230, 10, n_grp), np.random.normal(180, 10, n_grp)]).astype(int),
             '全数':[100] * 45,
@@ -94,7 +94,7 @@ if data_source == "🧪 サンプルデータで試す":
         })
     else:
         n = 30; x = np.linspace(10, 40, n)
-        df = pd.DataFrame({'温度': x, '品種': ['品種A']*15 + ['品種B']*15, '収量': 4.5 * x + 100 + np.random.normal(0, 8, n), '全数': 100, '発芽数': np.random.binomial(100, 1 / (1 + np.exp(-0.3 * (x - 25)))), '腐敗数': np.random.poisson(np.exp(0.09 * x))})
+        df = pd.DataFrame({'温度': x, '品種':['品種A']*15 + ['品種B']*15, '収量': 4.5 * x + 100 + np.random.normal(0, 8, n), '全数': 100, '発芽数': np.random.binomial(100, 1 / (1 + np.exp(-0.3 * (x - 25)))), '腐敗数': np.random.poisson(np.exp(0.09 * x))})
 else:
     uploaded_file = st.sidebar.file_uploader("分析するCSVファイルを選択", type="csv")
     if uploaded_file is not None:
@@ -180,7 +180,6 @@ if st.session_state.run_clicked:
     if "割合" in mode: use_cols.extend([sp_col, tt_col])
     df_clean = df.dropna(subset=[c for c in use_cols if c in df.columns]).copy()
 
-    # 🛑 【超重要】割合データのエラーの元を事前にチェックしてブロックする
     if "割合" in mode:
         if (df_clean[tt_col] == 0).any():
             st.warning(f"⚠️ エラー：分母である「{tt_col}」に 0 が含まれています。0で割り算ができないため、データを確認してください。")
@@ -194,7 +193,10 @@ if st.session_state.run_clicked:
     if "割合" in mode: rename_dict[tt_col] = 'Total_n'
     df_model = df_clean.rename(columns=rename_dict)
 
+    # 💡 【重要】Seabornのテーマ適用後に、日本語フォントを再セットして豆腐化を防ぐ
     sns.set_theme(style="whitegrid")
+    japanize_matplotlib.japanize()  # ◀◀ これを追加！
+    
     fig, ax = plt.subplots(figsize=(10, 6))
     code_snippet = ""
     download_df = None
@@ -313,7 +315,6 @@ if st.session_state.run_clicked:
                 model = smf.glm('Y_val ~ X_factor', data=df_model, family=sm.families.Binomial(), var_weights=np.asarray(df_model['Total_n'])).fit()
                 ax.plot(x_range, model.predict(pred_df), color='red', lw=3)
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
-                # 確率らしくY軸を0〜1に固定して見やすくする
                 ax.set_ylim(-0.05, 1.05)
                 code_snippet = f"import statsmodels.formula.api as smf\nimport statsmodels.api as sm\ndf['ratio'] = df['{sp_col}'] / df['{tt_col}']\nmodel = smf.glm('ratio ~ {fx}', data=df, family=sm.families.Binomial(), var_weights=df['{tt_col}']).fit()\nprint(model.summary())"
             
@@ -338,7 +339,6 @@ if st.session_state.run_clicked:
 
     except Exception as e:
         error_msg = str(e)
-        # Poissonという単語がエラーに混入するstatsmodels特有のバグに対する翻訳
         if "Poisson" in error_msg and "割合" in mode:
             st.error("⚠️ 解析中にエラーが発生しました。\n二項分布（割合データ）の計算を行おうとしましたが、データが極端に偏っている（例：ある温度以上で必ず100%発芽するなど）ため、モデルが計算できずエラーになりました。（※完全分離という現象です）")
         else:
