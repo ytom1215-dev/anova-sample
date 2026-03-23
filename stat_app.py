@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import japanize_matplotlib
+import japanize_matplotlib  # インポートするだけで日本語化されます
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
@@ -19,6 +19,12 @@ def get_cld_letters(df, target, group, tukey_summary):
     groups = means.index.tolist()
     cld = {g:[] for g in groups}
     current_letter = ord('a')
+    
+    # 文字列/Bool どちらが来ても安全に判定する関数
+    def is_rejected(val):
+        if isinstance(val, bool) or isinstance(val, np.bool_): return val
+        return str(val).lower() == 'true'
+
     for i in range(len(groups)):
         g1 = groups[i]
         non_diff = [g1]
@@ -26,8 +32,8 @@ def get_cld_letters(df, target, group, tukey_summary):
             g2 = groups[j]
             mask = ((tukey_summary['group1'].astype(str) == g1) & (tukey_summary['group2'].astype(str) == g2)) | \
                    ((tukey_summary['group1'].astype(str) == g2) & (tukey_summary['group2'].astype(str) == g1))
-            reject = tukey_summary.loc[mask, 'reject'].values
-            if len(reject) > 0 and not reject[0]: 
+            reject_vals = tukey_summary.loc[mask, 'reject'].values
+            if len(reject_vals) > 0 and not is_rejected(reject_vals[0]): 
                 non_diff.append(g2)
         shared_letters = set(cld[non_diff[0]])
         for g in non_diff[1:]:
@@ -79,7 +85,7 @@ if data_source == "🧪 サンプルデータで試す":
         n_grp = 15
         df = pd.DataFrame({
             '品種': ['品種A']*n_grp +['品種B']*n_grp + ['品種C']*n_grp,
-            '温度':['10度']*15 + ['20度']*15 + ['30度']*15,
+            '温度':['10度']*15 +['20度']*15 + ['30度']*15,
             '処理':['標準', '多量', '少量'] * 15,
             '収量': np.concatenate([np.random.normal(280, 10, n_grp), np.random.normal(230, 10, n_grp), np.random.normal(180, 10, n_grp)]).astype(int),
             '全数':[100] * 45,
@@ -94,7 +100,7 @@ else:
     uploaded_file = st.sidebar.file_uploader("分析するCSVファイルを選択", type="csv")
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file, encoding='utf-8')
+            df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
         except UnicodeDecodeError:
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, encoding='cp932')
@@ -142,7 +148,6 @@ with col3:
                 interaction_op = "*" if "あり" in interaction_choice else "+"
     else: fs = None
 
-
 # ==========================================
 # 💡 変数が変わったら結果をリセットする仕組み
 # ==========================================
@@ -150,13 +155,8 @@ current_settings = {
     "data_source": data_source,
     "file_name": uploaded_file.name if data_source == "📁 CSVアップロード" and uploaded_file is not None else None,
     "analysis_purpose": analysis_purpose,
-    "mode": mode,
-    "target": target,
-    "sp_col": sp_col if "割合" in mode else None,
-    "tt_col": tt_col if "割合" in mode else None,
-    "fx": fx,
-    "fs": fs,
-    "interaction": interaction_op
+    "mode": mode, "target": target, "fx": fx, "fs": fs, "interaction": interaction_op,
+    "sp_col": sp_col if "割合" in mode else None, "tt_col": tt_col if "割合" in mode else None
 }
 
 if 'last_settings' not in st.session_state:
@@ -167,12 +167,10 @@ if st.session_state.last_settings != current_settings:
     st.session_state.run_clicked = False
     st.session_state.last_settings = current_settings
 
-def handle_click():
-    st.session_state.run_clicked = True
+def handle_click(): st.session_state.run_clicked = True
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.button("🚀 解析を実行", type="primary", use_container_width=True, on_click=handle_click)
-
 
 # ==========================================
 # 🚀 実行結果 (Step 3)
@@ -185,8 +183,13 @@ if st.session_state.run_clicked:
     if "割合" in mode: use_cols.extend([sp_col, tt_col])
     df_clean = df.dropna(subset=[c for c in use_cols if c in df.columns]).copy()
 
+    # 🛠️ 【超重要】日本語カラム名によるエラーを防ぐための安全な内部リネーム処理
+    rename_dict = {target: 'Y_val', fx: 'X_factor'}
+    if fs: rename_dict[fs] = 'F_factor'
+    if "割合" in mode: rename_dict[tt_col] = 'Total_n'
+    df_model = df_clean.rename(columns=rename_dict)
+
     sns.set_theme(style="whitegrid")
-    plt.rcParams['font.family'] = 'IPAexGothic'
     fig, ax = plt.subplots(figsize=(10, 6))
     code_snippet = ""
     download_df = None
@@ -196,89 +199,91 @@ if st.session_state.run_clicked:
         # A: 要因解析モード
         # ------------------------------------------
         if "要因解析" in analysis_purpose:
-            df_clean[fx] = df_clean[fx].astype(str)
-            if fs: df_clean[fs] = df_clean[fs].astype(str)
-            formula_str = f'Q("{target}") ~ C(Q("{fx}")) {interaction_op} C(Q("{fs}"))' if fs else f'Q("{target}") ~ C(Q("{fx}"))'
+            df_model['X_factor'] = df_model['X_factor'].astype(str)
+            if fs: df_model['F_factor'] = df_model['F_factor'].astype(str)
+            formula_str = f'Y_val ~ C(X_factor) {interaction_op} C(F_factor)' if fs else 'Y_val ~ C(X_factor)'
             
             # ① 順序データ
             if "順序" in mode:
                 st.subheader("1. 全体の検定結果 (Kruskal-Wallis検定)")
-                groups_data =[df_clean[df_clean[fx] == g][target] for g in df_clean[fx].unique()]
+                groups_data =[df_model[df_model['X_factor'] == g]['Y_val'] for g in df_model['X_factor'].unique()]
                 stat, p_val = stats.kruskal(*groups_data)
                 st.info(f"📝 統計量 (H) = {stat:.3f}, **P値 = {p_val:.4e}**")
 
                 st.subheader(f"2. {fx} の多重比較 (Steel-Dwass検定)")
-                res_matrix = sp.posthoc_dscf(df_clean, val_col=target, group_col=fx)
+                res_matrix = sp.posthoc_dscf(df_model, val_col='Y_val', group_col='X_factor')
                 
-                groups = df_clean[fx].unique()
+                groups = df_model['X_factor'].unique()
                 pairs = list(itertools.combinations(groups, 2))
                 res =[]
                 for g1, g2 in pairs:
                     p_adj = res_matrix.loc[g1, g2]
-                    res.append({'Group1': str(g1), 'Group2': str(g2), 'p_value': p_adj, 'reject': p_adj < 0.05})
+                    res.append({'group1': str(g1), 'group2': str(g2), 'p_value': p_adj, 'reject': p_adj < 0.05})
+                
                 res_df = pd.DataFrame(res)
-                let_df, grp_ord = get_cld_letters(df_clean, target, fx, res_df.rename(columns={'Group1':'group1', 'Group2':'group2'}))
-                download_df = res_df
+                let_df, grp_ord = get_cld_letters(df_model, 'Y_val', 'X_factor', res_df)
+                
+                # 出力用に名前を元に戻す
+                download_df = res_df.rename(columns={'group1': f'{fx}_1', 'group2': f'{fx}_2'})
                 
                 c_l, c_r = st.columns([2, 1])
-                c_l.dataframe(res_df.style.format({'p_value': '{:.4f}'}))
+                c_l.dataframe(download_df.style.format({'p_value': '{:.4f}'}))
                 c_r.dataframe(let_df.rename(columns={'groups_name': fx}))
                 
                 sns.boxplot(x=fx, y=target, data=df_clean, ax=ax, palette="Set2", order=grp_ord, showfliers=False)
                 sns.stripplot(x=fx, y=target, data=df_clean, ax=ax, color=".3", alpha=0.6, jitter=True, order=grp_ord)
                 ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-                code_snippet = f"import scipy.stats as stats\nimport scikit_posthocs as sp\nstat, p_val = stats.kruskal(*groups_data)\nres_matrix = sp.posthoc_dscf(df, val_col='{target}', group_col='{fx}')"
 
             # ② それ以外
             else:
                 if "連続値" in mode:
-                    model = smf.ols(formula_str, data=df_clean).fit()
+                    model = smf.ols(formula_str, data=df_model).fit()
                     st.subheader("1. 全体の検定結果 (分散分析: ANOVA)")
-                    st.table(sm.stats.anova_lm(model, typ=2))
-                    
-                    clean_formula = formula_str.replace('Q("', '').replace('")', '')
-                    code_snippet = f"model = smf.ols('{clean_formula}', data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))"
+                    anova_table = sm.stats.anova_lm(model, typ=2)
+                    anova_table.rename(index={'C(X_factor)': fx, 'C(F_factor)': fs, 'C(X_factor):C(F_factor)': f'{fx}:{fs}'}, inplace=True)
+                    st.table(anova_table)
                 else:
                     if "割合" in mode:
-                        # 割合のGLM処理を修正
-                        formula = f'ratio ~ C(Q("{fx}")) {interaction_op} C(Q("{fs}"))' if fs else f'ratio ~ C(Q("{fx}"))'
                         family = sm.families.Binomial()
-                        model = smf.glm(formula, data=df_clean, family=family, var_weights=df_clean[tt_col]).fit()
+                        model = smf.glm(formula_str, data=df_model, family=family, var_weights=np.asarray(df_model['Total_n'])).fit()
                     else:
-                        formula = formula_str
                         family = sm.families.Poisson()
-                        model = smf.glm(formula, data=df_clean, family=family).fit()
+                        model = smf.glm(formula_str, data=df_model, family=family).fit()
                         
                     st.subheader("1. 全体の検定結果 (尤度比 / カイ二乗検定)")
                     w_res = model.wald_test_terms().summary_frame()
+                    w_res.rename(index={'C(X_factor)': fx, 'C(F_factor)': fs, 'C(X_factor):C(F_factor)': f'{fx}:{fs}'}, inplace=True)
                     st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
-                    code_snippet = f"model = smf.glm(formula, data=df, family=family).fit()\nprint(model.wald_test_terms().summary_frame())"
 
                 st.subheader(f"2. {fx} の多重比較 (Tukey HSD検定)")
-                tukey = pairwise_tukeyhsd(df_clean[target], df_clean[fx])
+                if fs is not None:
+                    st.info(f"💡 【補足】多重比較（Tukey検定）は全体の傾向を見るため、主要因「{fx}」間のみで実施しています。")
+
+                tukey = pairwise_tukeyhsd(df_model['Y_val'], df_model['X_factor'])
                 tk_df = pd.DataFrame(data=tukey.summary().data[1:], columns=tukey.summary().data[0])
-                let_df, grp_ord = get_cld_letters(df_clean, target, fx, tk_df)
-                download_df = tk_df
+                let_df, grp_ord = get_cld_letters(df_model, 'Y_val', 'X_factor', tk_df)
+                
+                # 出力用に名前を元に戻す
+                download_df = tk_df.rename(columns={'group1': f'{fx}_1', 'group2': f'{fx}_2'})
                 
                 c_l, c_r = st.columns([2, 1])
-                c_l.dataframe(tk_df); c_r.dataframe(let_df.rename(columns={'groups_name': fx}))
+                c_l.dataframe(download_df)
+                c_r.dataframe(let_df.rename(columns={'groups_name': fx}))
                 
                 if "連続値" in mode: 
                     sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
                 else: 
                     sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
             
-            # アルファベット付与のロジック修正 (副要因がない場合のみ描画)
+            # アルファベット付与 (副要因がない場合のみ描画)
             if fs is None:
                 for i, g in enumerate(grp_ord):
                     l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
-                    y_val = df_clean[df_clean[fx] == g][target].max()
+                    y_val = df_clean[df_clean[fx] == str(g)][target].max()
                     y_offset = df_clean[target].max() * 0.05 if df_clean[target].max() > 0 else 0.05
                     ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
-            else:
-                st.info("💡 副要因（色分け）が設定されているため、グラフへのアルファベット直接付与は省略しています。表をご確認ください。")
 
-            st.pyplot(fig) # グラフ描画をここに統一
+            st.pyplot(fig)
 
             if download_df is not None:
                 csv = download_df.to_csv(index=False).encode('utf-8-sig')
@@ -292,33 +297,29 @@ if st.session_state.run_clicked:
                 st.warning(f"⚠️ エラー：{fx} は数値データではないため回帰曲線は描画できません。X軸には数値データを選択してください。")
                 st.stop()
                 
+            x_range = np.linspace(df_model['X_factor'].min(), df_model['X_factor'].max(), 100)
+            pred_df = pd.DataFrame({'X_factor': x_range})
+
             if "連続値" in mode:
-                model = smf.ols(f'Q("{target}") ~ Q("{fx}")', data=df_clean).fit()
+                model = smf.ols('Y_val ~ X_factor', data=df_model).fit()
                 sns.regplot(x=fx, y=target, data=df_clean, ax=ax, scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
             elif "割合" in mode:
-                # 回帰解析の割合ロジックを修正
-                model = smf.glm(f'ratio ~ Q("{fx}")', data=df_clean, family=sm.families.Binomial(), var_weights=df_clean[tt_col]).fit()
-                x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
-                ax.plot(x_range, model.predict(pd.DataFrame({fx: x_range})), color='red', lw=3)
+                model = smf.glm('Y_val ~ X_factor', data=df_model, family=sm.families.Binomial(), var_weights=np.asarray(df_model['Total_n'])).fit()
+                ax.plot(x_range, model.predict(pred_df), color='red', lw=3)
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
             else:
-                model = smf.glm(f'Q("{target}") ~ Q("{fx}")', data=df_clean, family=sm.families.Poisson()).fit()
-                x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
-                ax.plot(x_range, model.predict(pd.DataFrame({fx: x_range})), color='red', lw=3)
+                model = smf.glm('Y_val ~ X_factor', data=df_model, family=sm.families.Poisson()).fit()
+                ax.plot(x_range, model.predict(pred_df), color='red', lw=3)
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
 
             st.subheader("1. 予測モデルの回帰グラフ")
-            st.pyplot(fig) # グラフ描画をここに統一
+            st.pyplot(fig)
             
             st.write("### 2. モデルの詳細要約")
             with st.expander("詳細を表示"): st.text(model.summary())
             
             summary_csv = model.summary().as_csv()
             st.download_button("📥 サマリー結果をダウンロード", data=summary_csv.encode('utf-8-sig'), file_name='regression_summary.csv', mime='text/csv')
-
-        st.divider()
-        with st.expander("👩‍💻 中級者向け：この解析のPythonスクリプトを確認する"):
-            st.code(code_snippet, language="python")
 
     except Exception as e:
         st.error(f"⚠️ 解析中にエラーが発生しました。\n選択した変数やデータの形式が正しいか確認してください。\n\n詳細: {e}")
