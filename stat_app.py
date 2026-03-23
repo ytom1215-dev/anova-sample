@@ -21,7 +21,7 @@ def get_cld_letters(df, target, group, tukey_summary):
     current_letter = ord('a')
     for i in range(len(groups)):
         g1 = groups[i]
-        non_diff =[g1]
+        non_diff = [g1]
         for j in range(i + 1, len(groups)):
             g2 = groups[j]
             mask = ((tukey_summary['group1'].astype(str) == g1) & (tukey_summary['group2'].astype(str) == g2)) | \
@@ -144,7 +144,7 @@ with col3:
 
 
 # ==========================================
-# 💡 【改善点】変数が変わったら結果をリセットする仕組み
+# 💡 変数が変わったら結果をリセットする仕組み
 # ==========================================
 current_settings = {
     "data_source": data_source,
@@ -159,12 +159,10 @@ current_settings = {
     "interaction": interaction_op
 }
 
-# 初回起動時の初期化
 if 'last_settings' not in st.session_state:
     st.session_state.last_settings = current_settings
     st.session_state.run_clicked = False
 
-# ユーザーが変数を変更したことを検知して、ボタンの実行状態を解除（False）する
 if st.session_state.last_settings != current_settings:
     st.session_state.run_clicked = False
     st.session_state.last_settings = current_settings
@@ -199,6 +197,7 @@ if st.session_state.run_clicked:
         # ------------------------------------------
         if "要因解析" in analysis_purpose:
             df_clean[fx] = df_clean[fx].astype(str)
+            if fs: df_clean[fs] = df_clean[fs].astype(str)
             formula_str = f'Q("{target}") ~ C(Q("{fx}")) {interaction_op} C(Q("{fs}"))' if fs else f'Q("{target}") ~ C(Q("{fx}"))'
             
             # ① 順序データ
@@ -216,7 +215,7 @@ if st.session_state.run_clicked:
                 res =[]
                 for g1, g2 in pairs:
                     p_adj = res_matrix.loc[g1, g2]
-                    res.append({'Group1': g1, 'Group2': g2, 'p_value': p_adj, 'reject': p_adj < 0.05})
+                    res.append({'Group1': str(g1), 'Group2': str(g2), 'p_value': p_adj, 'reject': p_adj < 0.05})
                 res_df = pd.DataFrame(res)
                 let_df, grp_ord = get_cld_letters(df_clean, target, fx, res_df.rename(columns={'Group1':'group1', 'Group2':'group2'}))
                 download_df = res_df
@@ -241,14 +240,15 @@ if st.session_state.run_clicked:
                     code_snippet = f"model = smf.ols('{clean_formula}', data=df).fit()\nprint(sm.stats.anova_lm(model, typ=2))"
                 else:
                     if "割合" in mode:
-                        df_clean['not_sp'] = df_clean[tt_col] - df_clean[sp_col]
-                        formula = f'Q("{sp_col}") + not_sp ~ C(Q("{fx}")) {interaction_op} C(Q("{fs}"))' if fs else f'Q("{sp_col}") + not_sp ~ C(Q("{fx}"))'
+                        # 割合のGLM処理を修正
+                        formula = f'ratio ~ C(Q("{fx}")) {interaction_op} C(Q("{fs}"))' if fs else f'ratio ~ C(Q("{fx}"))'
                         family = sm.families.Binomial()
+                        model = smf.glm(formula, data=df_clean, family=family, var_weights=df_clean[tt_col]).fit()
                     else:
                         formula = formula_str
                         family = sm.families.Poisson()
+                        model = smf.glm(formula, data=df_clean, family=family).fit()
                         
-                    model = smf.glm(formula, data=df_clean, family=family).fit()
                     st.subheader("1. 全体の検定結果 (尤度比 / カイ二乗検定)")
                     w_res = model.wald_test_terms().summary_frame()
                     st.table(w_res.apply(lambda c: c.map(lambda x: np.asarray(x).item() if hasattr(x, "__len__") else x)))
@@ -263,15 +263,22 @@ if st.session_state.run_clicked:
                 c_l, c_r = st.columns([2, 1])
                 c_l.dataframe(tk_df); c_r.dataframe(let_df.rename(columns={'groups_name': fx}))
                 
-                if "連続値" in mode: sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
-                else: sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
+                if "連続値" in mode: 
+                    sns.boxplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, palette="Set2", order=grp_ord)
+                else: 
+                    sns.barplot(x=fx, y=target, hue=fs, data=df_clean, ax=ax, capsize=.1, palette="viridis", order=grp_ord)
             
-            # アルファベット付与
-            for i, g in enumerate(grp_ord):
-                l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
-                y_val = df_clean[df_clean[fx] == g][target].max()
-                y_offset = df_clean[target].max() * 0.05 if df_clean[target].max() > 0 else 0.05
-                ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
+            # アルファベット付与のロジック修正 (副要因がない場合のみ描画)
+            if fs is None:
+                for i, g in enumerate(grp_ord):
+                    l = let_df.loc[let_df['groups_name'] == g, 'letters'].values[0]
+                    y_val = df_clean[df_clean[fx] == g][target].max()
+                    y_offset = df_clean[target].max() * 0.05 if df_clean[target].max() > 0 else 0.05
+                    ax.text(i, y_val + y_offset, l, ha='center', color='red', weight='bold', size=15)
+            else:
+                st.info("💡 副要因（色分け）が設定されているため、グラフへのアルファベット直接付与は省略しています。表をご確認ください。")
+
+            st.pyplot(fig) # グラフ描画をここに統一
 
             if download_df is not None:
                 csv = download_df.to_csv(index=False).encode('utf-8-sig')
@@ -289,8 +296,8 @@ if st.session_state.run_clicked:
                 model = smf.ols(f'Q("{target}") ~ Q("{fx}")', data=df_clean).fit()
                 sns.regplot(x=fx, y=target, data=df_clean, ax=ax, scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
             elif "割合" in mode:
-                df_clean['not_sp'] = df_clean[tt_col] - df_clean[sp_col]
-                model = smf.glm(f'Q("{sp_col}") + not_sp ~ Q("{fx}")', data=df_clean, family=sm.families.Binomial()).fit()
+                # 回帰解析の割合ロジックを修正
+                model = smf.glm(f'ratio ~ Q("{fx}")', data=df_clean, family=sm.families.Binomial(), var_weights=df_clean[tt_col]).fit()
                 x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
                 ax.plot(x_range, model.predict(pd.DataFrame({fx: x_range})), color='red', lw=3)
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
@@ -301,15 +308,13 @@ if st.session_state.run_clicked:
                 ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
 
             st.subheader("1. 予測モデルの回帰グラフ")
-            st.pyplot(fig)
+            st.pyplot(fig) # グラフ描画をここに統一
+            
             st.write("### 2. モデルの詳細要約")
             with st.expander("詳細を表示"): st.text(model.summary())
             
             summary_csv = model.summary().as_csv()
             st.download_button("📥 サマリー結果をダウンロード", data=summary_csv.encode('utf-8-sig'), file_name='regression_summary.csv', mime='text/csv')
-
-        if "要因解析" in analysis_purpose:
-            st.pyplot(fig)
 
         st.divider()
         with st.expander("👩‍💻 中級者向け：この解析のPythonスクリプトを確認する"):
