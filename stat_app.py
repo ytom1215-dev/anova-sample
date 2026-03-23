@@ -251,4 +251,47 @@ if st.session_state.run_clicked:
             # 【改善3】結果のエクスポートボタン
             if download_df is not None:
                 csv = download_df.to_csv(index=False).encode('utf-8-sig') # Excelで文字化けしないBOM付きUTF-8
-                st.download_button(label="📥 多重比較の結果をCSVでダウンロード", data=csv, file_name='tukey_results.csv'
+                st.download_button(label="📥 多重比較の結果をCSVでダウンロード", data=csv, file_name='tukey_results.csv', mime='text/csv')
+
+        # ------------------------------------------
+        # B: 回帰解析モード
+        # ------------------------------------------
+        else:
+            if not np.issubdtype(df_clean[fx].dtype, np.number):
+                st.warning(f"⚠️ エラー：{fx} は数値データではないため回帰曲線は描画できません。X軸には数値データを選択してください。")
+                st.stop()
+                
+            if "連続値" in mode:
+                model = smf.ols(f'Q("{target}") ~ Q("{fx}")', data=df_clean).fit()
+                sns.regplot(x=fx, y=target, data=df_clean, ax=ax, scatter_kws={'alpha':0.5}, line_kws={'color':'red'})
+            elif "割合" in mode:
+                df_clean['not_sp'] = df_clean[tt_col] - df_clean[sp_col]
+                model = smf.glm(f'Q("{sp_col}") + not_sp ~ Q("{fx}")', data=df_clean, family=sm.families.Binomial()).fit()
+                x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
+                ax.plot(x_range, model.predict(pd.DataFrame({fx: x_range})), color='red', lw=3)
+                ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
+            else:
+                model = smf.glm(f'Q("{target}") ~ Q("{fx}")', data=df_clean, family=sm.families.Poisson()).fit()
+                x_range = np.linspace(df_clean[fx].min(), df_clean[fx].max(), 100)
+                ax.plot(x_range, model.predict(pd.DataFrame({fx: x_range})), color='red', lw=3)
+                ax.scatter(df_clean[fx], df_clean[target], alpha=0.5)
+
+            st.subheader("1. 予測モデルの回帰グラフ")
+            st.pyplot(fig) # 回帰モードはここで描画
+            st.write("### 2. モデルの詳細要約")
+            with st.expander("詳細を表示"): st.text(model.summary())
+            
+            # 回帰の要約をCSV化
+            summary_csv = model.summary().as_csv()
+            st.download_button("📥 サマリー結果をダウンロード", data=summary_csv.encode('utf-8-sig'), file_name='regression_summary.csv', mime='text/csv')
+
+        # 要因解析モードのグラフ描画
+        if "要因解析" in analysis_purpose:
+            st.pyplot(fig)
+
+        st.divider()
+        with st.expander("👩‍💻 中級者向け：この解析のPythonスクリプトを確認する"):
+            st.code(code_snippet, language="python")
+
+    except Exception as e:
+        st.error(f"⚠️ 解析中にエラーが発生しました。\n選択した変数やデータの形式が正しいか確認してください。\n\n詳細: {e}")
