@@ -10,7 +10,7 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 # ページ設定
 st.set_page_config(page_title="農業データ統計解析アプリ", layout="wide")
-st.title("📊 栽培試験データ・自動解析ツール")
+st.title("📊 栽培試験データ・分散分析解析ツール")
 
 data_source = st.radio(
     "データの入力方法を選んでください：", 
@@ -100,7 +100,7 @@ if df is not None:
             else:
                 st.header("📈 解析結果報告書")
                 
-                # 🌟すべてのグラフの背景とフォントを「一括」で設定🌟
+                # 🌟すべてのグラフの背景とフォントを「一括」で設定（ここで豆腐を完全ブロック）🌟
                 sns.set_theme(style="whitegrid")
                 plt.rcParams['font.family'] = 'IPAexGothic'
 
@@ -155,6 +155,7 @@ summary(model)
                 with col_b:
                     st.dataframe(letters_df_x.rename(columns={'groups_name': factor_x, 'letters': '有意差(abc)'}))
 
+                # 個別の設定を削除し、一括設定に従わせる
                 fig_x, ax_x = plt.subplots(figsize=(10, 6))
                 sns.boxplot(x=factor_x, y=target_col, data=df_clean, order=groups_order_x, ax=ax_x, color='#f0f0f0', showfliers=False)
                 sns.stripplot(x=factor_x, y=target_col, data=df_clean, order=groups_order_x, ax=ax_x, color='black', alpha=0.5)
@@ -224,6 +225,32 @@ print(cld)
                 ax_sub.set_ylabel(target_col, fontsize=12)
                 ax_sub.set_xlabel(factor_sub, fontsize=12)
                 st.pyplot(fig_sub)
+
+                # --- コードリファレンス (Tukey: 副要因) ---
+                with st.expander("💻 この解析のコードを見る (Python / R)"):
+                    tab1, tab2 = st.tabs(["🐍 Python", "🔵 R"])
+                    with tab1:
+                        st.code(f"""
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+# Tukey HSD検定の実行
+tukey_sub = pairwise_tukeyhsd(endog=df['{target_col}'], groups=df['{factor_sub}'], alpha=0.05)
+print(tukey_sub)
+                        """, language="python")
+                    with tab2:
+                        st.code(f"""
+# RでのTukeyの多重比較とCLD（アルファベット付与）
+library(multcompView)
+
+model_sub <- aov({target_col} ~ as.factor({factor_sub}), data=df)
+tukey_sub <- TukeyHSD(model_sub)
+print(tukey_sub)
+
+# アルファベットの付与 (CLD)
+cld_sub <- multcompLetters4(model_sub, tukey_sub)
+print(cld_sub)
+                        """, language="r")
+
                 st.divider()
 
                 # 4. 単回帰分析
