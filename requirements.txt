@@ -1,9 +1,9 @@
 streamlit
-pandas
 numpy
+pandas
+scipy
+plotly
 matplotlib
 seaborn
-japanize-matplotlib
 statsmodels
-scipy
-scikit-posthocs
+japanize-matplotlib
