@@ -11,15 +11,15 @@ import seaborn as sns
 from statsmodels.formula.api import ols
 from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
-
 from matplotlib import font_manager
+import io  # ← テキスト入力（コピペ）からのデータ読み込みに必要
 
 # --- 日本語フォント対応 ---
 def set_japanese_font():
     # 1. まず japanize_matplotlib を試す（入っていれば一番確実）
     try:
         import japanize_matplotlib
-        japanize_matplotlib.japanize()  # ← ここで明示的にフォント設定を適用
+        japanize_matplotlib.japanize()
         return
     except ImportError:
         pass
@@ -78,14 +78,14 @@ st.set_page_config(page_title="第3章 t検定・分散分析・多重比較", l
 st.title("第3章 t検定・分散分析・多重比較「平均の差を正しく検定する」")
 st.markdown("""
 このアプリでは、架空の試験データを用いたシミュレーターで**t検定**と**分散分析**の仕組みを直感的に学ぶことができます。
-また、「実データ解析ツール」タブでは、**ご自身の実験データ（CSV）を読み込んで本格的な統計解析とグラフ作成**を自動で行うことができます。
+また、「実データ解析ツール」タブでは、**ご自身の実験データを貼り込んで本格的な統計解析とグラフ作成**を自動で行うことができます。
 """)
 
 # タブの作成
 tab1, tab2, tab3, tab4 = st.tabs([
     "⚖️ 1. t検定シミュレーター (2群)", 
     "🌾 2. 分散分析シミュレーター (3群以上)", 
-    "📊 3. 実データ解析ツール (CSV対応)", 
+    "📊 3. 実データ解析ツール (コピペ対応)", 
     "📖 4. 統計の基礎知識とコード"
 ])
 
@@ -107,7 +107,6 @@ with tab1:
         std_dev = st.slider("データのバラツキ（標準偏差）", 50, 300, 100, step=10, key="std_t")
         
     with col2:
-        # データ生成
         data_a = np.random.normal(mean_a, std_dev, n_samples_t)
         data_b = np.random.normal(mean_b, std_dev, n_samples_t)
         
@@ -116,12 +115,10 @@ with tab1:
             "収量 (g)": np.concatenate([data_a, data_b])
         })
         
-        # 可視化 (Plotly)
         fig_t = px.box(df_t, x="品種", y="収量 (g)", color="品種", points="all", title="収量データの分布（箱ひげ図）")
-        fig_t.update_yaxes(range=[0, 2000]) # Y軸を固定し、バラツキの変化を視覚的に分かりやすく
+        fig_t.update_yaxes(range=[0, 2000])
         st.plotly_chart(fig_t, use_container_width=True)
         
-        # t検定の実行（現代の主流である「ウェルチのt検定 (equal_var=False)」）
         t_stat, p_value_t = stats.ttest_ind(data_a, data_b, equal_var=False)
         
         st.subheader("📊 検定結果 (ウェルチのt検定)")
@@ -151,7 +148,6 @@ with tab2:
         std_dev_f = st.slider("データのバラツキ（標準偏差）", 50, 300, 150, step=10, key="std_f")
 
     with col4:
-        # データ生成
         data_c = np.random.normal(mean_c, std_dev_f, n_samples_f)
         data_d = np.random.normal(mean_d, std_dev_f, n_samples_f)
         data_e = np.random.normal(mean_e, std_dev_f, n_samples_f)
@@ -161,12 +157,10 @@ with tab2:
             "収量 (g)": np.concatenate([data_c, data_d, data_e])
         })
         
-        # 可視化 (Plotly)
         fig_f = px.box(df_f, x="処理区", y="収量 (g)", color="処理区", points="all", title="施肥区ごとの収量分布（箱ひげ図）")
-        fig_f.update_yaxes(range=[0, 2000]) # Y軸を固定
+        fig_f.update_yaxes(range=[0, 2000])
         st.plotly_chart(fig_f, use_container_width=True)
         
-        # 一元配置分散分析の実行
         f_stat, p_value_f = stats.f_oneway(data_c, data_d, data_e)
         
         st.subheader("📊 検定結果 (分散分析)")
@@ -176,7 +170,6 @@ with tab2:
         if p_value_f < 0.05:
             st.success("🎉 **有意差あり (p < 0.05)**：少なくとも1つの処理区に有意な差があります！")
             
-            # 分散分析で有意差が出た場合のみ、Tukeyの多重比較を自動で実行
             st.markdown("#### 🔍 続けて多重比較 (Tukey法) を実行：具体的にどの区に差があるのか？")
             tukey = pairwise_tukeyhsd(endog=df_f['収量 (g)'], groups=df_f['処理区'], alpha=0.05)
             
@@ -185,20 +178,19 @@ with tab2:
             tukey_df = tukey_df.rename(columns={'group1': '比較A', 'group2': '比較B', 'meandiff': '平均値の差', 'p-adj': '調整済p値', 'reject': '判定'})
             
             st.dataframe(tukey_df[['比較A', '比較B', '平均値の差', '調整済p値', '判定']], use_container_width=True)
-            
         else:
             st.warning("🤔 **有意差なし (p >= 0.05)**：処理区の間に有意な差があるとは言えません。")
 
 # ==========================================
-# タブ3: 実データ解析ツール (CSV対応)
+# タブ3: 実データ解析ツール (コピペ対応)
 # ==========================================
 with tab3:
     st.header("📊 栽培試験データ・分散分析解析ツール")
-    st.markdown("自身の実験データ（CSV）を読み込んで、分散分析からグラフ作成までを一括で行います。")
+    st.markdown("ご自身の実験データをExcelなどからコピーして貼り付けることで、分散分析からグラフ作成までを一括で行います。（ファイルのアップロード制限がある環境でも動作します）")
 
     data_source = st.radio(
         "データの入力方法を選んでください：", 
-        ["🥔 組み込みのサンプルデータで試す", "📁 自分のCSVをアップロードする"],
+        ["🥔 組み込みのサンプルデータで試す", "📋 Excelからデータを貼り付ける（庁内ネットワーク対応）"],
         key="data_source"
     )
 
@@ -212,18 +204,16 @@ with tab3:
         })
         st.success("✅ サンプルデータを読み込みました。（施肥量を数値データとして扱います）")
     else:
-        uploaded_file = st.file_uploader("CSVファイルをアップロードしてください", type="csv", key="uploader")
-        if uploaded_file is not None:
+        st.info("💡 解析したいデータをExcelなどの表計算ソフトで選択してコピー（Ctrl+C）し、下の入力欄に貼り付け（Ctrl+V）てください。※1行目には必ず列名（ヘッダー）を含めてください。")
+        pasted_data = st.text_area("ここにデータを貼り付けてください", height=200)
+        
+        if pasted_data:
             try:
-                df_real = pd.read_csv(uploaded_file, encoding='shift_jis')
-            except UnicodeDecodeError:
-                uploaded_file.seek(0)
-                df_real = pd.read_csv(uploaded_file, encoding='utf-8')
-            
-            if len(df_real.columns) == 1:
-                uploaded_file.seek(0)
-                df_real = pd.read_csv(uploaded_file, encoding='shift_jis', sep='\t')
-            st.success("✅ CSVを読み込みました。")
+                # sep=None, engine='python' とすることで、Excelからのコピペ（タブ区切り）やCSV（カンマ区切り）を自動判別します
+                df_real = pd.read_csv(io.StringIO(pasted_data), sep=None, engine='python')
+                st.success("✅ データを正常に読み込みました。")
+            except Exception as e:
+                st.error(f"データの読み込みに失敗しました。コピー範囲が正しいか確認してください。エラー詳細: {e}")
 
     if df_real is not None:
         st.subheader("1. データプレビュー")
@@ -253,10 +243,9 @@ with tab3:
                 else:
                     st.header("📈 解析結果報告書")
                     
-                    # ======= 【重要】グラフのフォントリセット対策 =======
-                    sns.set_theme(style="whitegrid") # ここで一度フォントが英語にリセットされてしまう
-                    set_japanese_font()              # すかさず日本語フォントを再設定する
-                    # ====================================================
+                    # フォントリセット対策
+                    sns.set_theme(style="whitegrid")
+                    set_japanese_font()
 
                     df_clean[factor_x] = df_clean[factor_x].astype(str)
                     if factor_sub != "なし":
@@ -305,7 +294,7 @@ eta_squared(model)
                         if len(anova_res.index) == len(new_index):
                             anova_res.index = new_index
                         else:
-                            st.warning("⚠️ モデルの縮退により、一部の効果が計算されませんでした。ANOVA表のインデックスは自動設定されます。")
+                            st.warning("⚠️ モデルの縮退により、一部の効果が計算されませんでした。")
 
                         st.subheader("1. 二元配置分散分析表 (主効果＋交互作用) (Typ II ANOVA)")
 
@@ -331,7 +320,6 @@ library(effectsize)
 eta_squared(model)
                         """
 
-                    # 寄与率の計算
                     anova_res['寄与率'] = anova_res['sum_sq'] / anova_res['sum_sq'].sum()
 
                     st.dataframe(anova_res.style.format({
